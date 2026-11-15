@@ -36,18 +36,18 @@ Documento para quien continúe el proyecto (persona u otro modelo). Léelo enter
 | `js/migracion.js` | Importa la copia de la app antigua (`app: "mis-facturas"`, versión 2) con informe de control. |
 | `js/copias.js` | Archivo de copia cifrado y fusión entre dispositivos. |
 | `js/modelos.js` | Las cifras para presentar: casillas de los modelos 303, 130 y 390 y resumen para la renta. Solo ordena y explica lo que calcula `fiscal.js`. |
-| `js/csv.js` | Exportación a CSV de facturas y de gastos. |
+| `js/csv.js` | Exportación a CSV de facturas y de gastos, y los tres libros registro por año (emitidas, recibidas, bienes de inversión). |
 | `js/app.js` | Interfaz: vistas, fichas, diálogos, eventos delegados por `data-accion`. |
 | `sw.js`, `manifest.webmanifest`, `iconos/` | Instalación y funcionamiento sin internet. |
-| `pruebas/` | `logica.mjs` (Node, sin dependencias), `e2e.mjs` (fase 1) y `e2e-autonomo.mjs` (fase 2): Playwright + Chrome, dos dispositivos. |
+| `pruebas/` | `logica.mjs` (Node, sin dependencias), `e2e.mjs` (fase 1) y `e2e-autonomo.mjs` (fases 2 y 3): Playwright + Chrome, dos dispositivos. |
 
 ## Datos
 
 Está descrito en la cabecera de `js/modelo.js`. Resumen:
 
-- `estado = { esquema, ajustes, clientes[], facturas[], gastos[] }`. Se cifra entero y se guarda en IndexedDB
-  (clave `boveda`). Esquema actual: 3. El 1 no tenía `ajustes.fiscal` ni `gastos`; el 2 no tenía amortización,
-  gastos de difícil justificación ni minoración. `completar()` añade lo que falte con los valores de partida. Una app
+- `estado = { esquema, ajustes, clientes[], facturas[], gastos[], ayudas[] }`. Se cifra entero y se guarda en IndexedDB
+  (clave `boveda`). Esquema actual: 4. El 1 no tenía `ajustes.fiscal` ni `gastos`; el 2 no tenía amortización,
+  gastos de difícil justificación ni minoración; el 3 no tenía `ayudas`. `completar()` añade lo que falte con los valores de partida. Una app
   con un esquema menor rechaza importar una copia con uno mayor («actualiza la app»).
 - Factura: `id, n, ref, clienteId, estado ('abierta'|'pendiente'|'cobrada'), fechaFactura, fechaCobro, neto, diasSS,
   nota, servicios[{evento, mod, fecha, dias, importe}]`. `antiguo` guarda campos de la app vieja que no se usan
@@ -65,6 +65,7 @@ Está descrito en la cabecera de `js/modelo.js`. Resumen:
   Si es material que se amortiza lleva además `amortiza: true` y `amortPct` (% al año): no cuenta como gasto de golpe,
   sino `valor × % × días en uso / días del año` cada año hasta agotar el valor (`amortizadoEnAnio()`). Su IVA se
   deduce entero en el trimestre de la compra.
+- Ayuda: `id, fecha, concepto, importe, cuentaSS` (subvención puntual de la actividad; ver «Fase 3, parte B»).
 - `ajustes.fiscal`: epígrafe, régimen de IVA, porcentajes, tramos de cuota (`cuotas[{desde:'AAAA-MM', importe}]`),
   categorías de gasto, `confirmados{}` (valores que el usuario ya ha comprobado) y `presentados{}` (modelos
   presentados, con id `AAAA-303-1`, `AAAA-130-1`, `AAAA-390`, `AAAA-347`, `AAAA-renta`).
@@ -160,16 +161,36 @@ Fase 3, parte B (15 de noviembre de 2026; plan completo en la sección 14 del do
   euro de gasto baja el beneficio (1 − genéricos) × (1 − difícil justificación, salvo que ya esté en su tope). Es solo
   una estimación: NO cambia la cuota que la app resta, que sigue saliendo de `cuotas`.
 
+- Ayuda puntual (1.2.3, `estado.ayudas`, Más → Ayudas y subvenciones): es ingreso de la actividad en el trimestre de su
+  fecha. Entra en el beneficio, en la casilla 01 del 130, en la reserva de la hucha y en el resumen de la renta
+  («Subvenciones corrientes»). No lleva IVA ni retención, no es «facturado» (`a.base` sigue siendo solo facturas; las
+  ayudas van en `a.ayudas`) y no cambia el neto. Cuenta como ingreso sin retención para la regla del 70 % (criterio
+  prudente: una ayuda grande obliga a presentar el 130). `cuentaSS` (activado de partida): si está apagado, la ayuda no
+  entra en el beneficio para la Seguridad Social (`anioFiscal(..., { ayudas: 'ss' })`). En `ritmoSS()` la ayuda se suma
+  una sola vez: «a este ritmo» solo alarga el beneficio sin ayudas. DUDA ABIERTA: no hay criterio oficial publicado
+  sobre la ayuda de Garantía Juvenil; el usuario tiene que confirmarlo si se la conceden.
+- Libros registro (1.2.4, `libroEmitidas()`, `libroRecibidas()`, `libroBienes()` en `csv.js`; Más → Copias de seguridad):
+  un CSV por libro y año, solo con actividad de autónomo. Emitidas: una fila por factura emitida (las ayudas al final,
+  marcadas como «no es factura»). No son el formato electrónico oficial; la columna de NIF va vacía (la app no lo guarda).
+- Gráficos (1.3.0, `mesesDelAnio()` en `fiscal.js`, `impGraficos()` y `graficoMeses()` en `app.js`; Impuestos → Gráficos):
+  por mes y por fecha de factura, neto = base − IRPF − cuota, impuestos = IVA + IRPF + cuota (neto + impuestos = lo
+  cobrado con IVA) y gastos = lo pagado. Los gastos no se restan del neto y las ayudas no entran. El SVG se hace a mano,
+  sin librerías ni estilos en línea; los tres tonos (`.g-neto`, `.g-gastos`, `.g-impuestos` en `app.css`) están
+  comprobados sobre el fondo oscuro para daltonismo y contraste: no los cambies sin volver a comprobarlos. Tocar un mes
+  (o su fila en la tabla) elige `S.mes` y enseña su detalle y sus facturas, editables desde ahí.
+- `leerNumero()` (1.2.3): «1.000» escrito sin coma se lee como mil (antes, como uno). «1.5» sigue siendo 1,5.
+
 ## Lo que falta
 
 **Fases 1 y 2 y fase 3 parte A: hechas** (desde la versión 1.2.0). La parte A: casillas de los modelos 303, 130 y 390 con
 explicación, resumen para la renta, material que se amortiza, gastos de difícil justificación, minoración del 130 y
 reducción por inicio de actividad.
 
-**Fase 3, parte B (en marcha):** hechos el punto 1, tarifa plana (1.2.1), y el 4, cuota
-según el beneficio con tabla de tramos editable (1.2.2). Pendientes, en este orden de trabajo: 5) ayuda puntual como
-ingreso de la actividad, con interruptor «cuenta para la Seguridad Social»; 2) gráficos mes a mes; 3) libros registro
-en CSV (pueden salir de `aCSV()` y `gastosCSV()`). El comparador cooperativa / autónomo NO se hace (decisión del usuario).
+**Fase 3, parte B: hecha** (versión 1.3.0): tarifa plana (1.2.1), cuota según el beneficio (1.2.2), ayuda puntual
+(1.2.3), libros registro (1.2.4) y gráficos (1.3.0). El comparador cooperativa / autónomo NO se hace (decisión del usuario).
+
+Pendiente, de baja prioridad: aprovechar el ancho de la pantalla en el PC sin quitar las pestañas de abajo; confirmar
+la tabla de tramos y el salario mínimo de cada año; resolver la duda de la ayuda de Garantía Juvenil si se la conceden.
 
 Limitaciones conocidas: no hay prorrata de IVA, recargo de equivalencia ni operaciones con el extranjero; el material
 comprado antes del alta no se amortiza; la cuota del mes del alta cuenta entera.

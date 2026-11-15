@@ -6,7 +6,7 @@ import * as M from '../js/modelo.js';
 import * as C from '../js/copias.js';
 import { migrarCopiaV2, esCopiaAntigua } from '../js/migracion.js';
 import { derivarClave, cifrar, descifrar, aleatorio } from '../js/cripto.js';
-import { aCSV, gastosCSV } from '../js/csv.js';
+import { aCSV, gastosCSV, libroEmitidas, libroRecibidas, libroBienes } from '../js/csv.js';
 import * as F from '../js/fiscal.js';
 import * as MO from '../js/modelos.js';
 
@@ -317,7 +317,7 @@ await prueba('simulación: sin fecha de alta, las facturas reales como si fueran
 await prueba('un estado de la versión anterior se completa sin perder nada; los gastos viajan en las copias', () => {
   const viejo = { esquema: 1, ajustes: { fechaAlta: null, avisoCopiaDias: 9, _mod: 5, _base: 5 }, clientes: [], facturas: [] };
   const c = M.completar(structuredClone(viejo));
-  assert.deepEqual([c.esquema, c.ajustes.avisoCopiaDias, c.ajustes.fiscal.ivaPct, c.ajustes.fiscal.difJustPct, c.gastos], [3, 9, 21, 5, []]);
+  assert.deepEqual([c.esquema, c.ajustes.avisoCopiaDias, c.ajustes.fiscal.ivaPct, c.ajustes.fiscal.difJustPct, c.gastos, c.ayudas], [4, 9, 21, 5, [], []]);
   const B2 = aplicar(M.estadoVacio(), A);
   assert.equal(B2.gastos.length, 3); assert.equal(B2.ajustes.fechaAlta, '2027-01-01');
   assert.deepEqual(F.anioFiscal(B2, '2027', HOY), F.anioFiscal(A, '2027', HOY));
@@ -470,6 +470,103 @@ await prueba('con los gastos de difícil justificación en su tope, cada euro de
   assert.equal(c.porEuro, 0.93);
   // (58.115,32 + 1.063,68) × 0,93 = 55.036,47 al año; sobran 55.036,47 − 15.816,67 = 39.219,80; / 0,93 = 42.171,83
   assert.deepEqual([c.anual, c.falta], [55036.47, 42171.83]);
+});
+
+console.log('Fase 3B: ayuda puntual');
+const ayuda = (id, fecha, importe, cuentaSS = true) => ({ id, fecha, concepto: 'Ayuda', importe, cuentaSS, _mod: 1, _base: 0 });
+const conAyuda = (...ay) => { const e = estadoAutonomo(); e.ayudas.push(...ay); return e; };
+await prueba('una ayuda es ingreso de la actividad: sube el beneficio y la reserva de la renta; no es facturado, ni IVA, ni neto', () => {
+  const a = F.anioFiscal(conAyuda(ayuda('y1', '2027-03-10', 1000)), '2027', HOY), [t1, t2] = a.t;
+  // 1T: 1.000 facturado + 1.000 de ayuda − 100 de gasto − 265,92 de cuota = 1.634,08; − 5 % (81,70) = 1.552,38
+  // 2T acumulado: 2.500 − 321 − 531,84 = 1.647,16; − 5 % (82,36) = 1.564,80
+  assert.deepEqual([t1.base, t1.ayudas, t1.acum.rendimiento, t2.acum.rendimiento], [1000, 1000, 1552.38, 1564.8]);
+  assert.deepEqual([a.base, a.ayudas, a.iva, a.total303, a.netoFacturas, a.neto, a.rendimiento], [1500, 1000, 315, 267.75, 1395, 863.16, 1564.8]);
+  // La ayuda no lleva retención: solo el 50 % de los ingresos del 1T lleva retención (menos del 70 %) -> toca el modelo 130.
+  // 1T: 20 % de 1.552,38 = 310,48 − 70 retenidos = 240,48 − 100 de minoración = 140,48 a ingresar. 2T: sale negativo.
+  assert.deepEqual([t1.pctRetenido, t1.obligado130, t1.c130['01'], t1.c130['07'], t1.pago130, t2.pctRetenido, t2.c130['01'], t2.pago130], [50, true, 2000, 240.48, 140.48, 60, 2500, 0]);
+  // reserva de renta: 20 % de 1.564,80 = 312,96 − 105 retenidos − 140,48 del 130 = 67,48
+  assert.deepEqual([a.total130, a.reservaRenta], [140.48, 67.48]);
+});
+await prueba('ayuda y Seguridad Social: cuenta de partida, se suma una sola vez (no se alarga «a este ritmo») y se puede dejar fuera', () => {
+  let r = F.ritmoSS(conAyuda(ayuda('y1', '2027-03-10', 1000)), '2027', HOY);
+  // con ayuda: (1.564,80 + 531,84) × 0,93 = 1.949,88 · sin ayuda: 1.066,38, que a este ritmo son 2.344,75 · total: 2.344,75 + 883,50
+  assert.deepEqual([r.llevas, r.ayudas, r.sinAyudas.llevas, r.sinAyudas.proyeccion, r.proyeccion, r.soloPorAyudas], [1949.88, 1000, 1066.38, 2344.75, 3228.25, false]);
+  const fuera = conAyuda(ayuda('y1', '2027-03-10', 1000, false));
+  r = F.ritmoSS(fuera, '2027', HOY);
+  assert.deepEqual([r.llevas, r.ayudas, r.proyeccion], [1066.38, 0, 2344.75]);       // para la Seguridad Social no cuenta...
+  assert.equal(F.anioFiscal(fuera, '2027', HOY).rendimiento, 1564.8);                // ...pero para Hacienda sí
+  r = F.ritmoSS(conAyuda(ayuda('y1', '2027-03-10', 20000)), '2027', HOY);
+  // 20.000 de ayuda: (19.614,80 + 531,84) × 0,93 = 18.736,38 -> pasa del salario mínimo solo por la ayuda
+  assert.deepEqual([r.llevas, r.cumple, r.sinAyudas.cumple, r.soloPorAyudas], [18736.38, false, true, true]);
+});
+await prueba('ayuda anterior al alta no cuenta; en simulación sí; sale en el modelo 130 y en el resumen de la renta', () => {
+  const e = conAyuda(ayuda('y0', '2027-02-01', 500), ayuda('y1', '2027-03-10', 1000)); e.ajustes.fechaAlta = '2027-03-01';
+  assert.equal(F.anioFiscal(e, '2027', HOY).ayudas, 1000);
+  const sim = conAyuda(ayuda('y2', '2026-12-15', 300)); sim.ajustes.fechaAlta = null;
+  assert.deepEqual([F.anioFiscal(sim, '2026', HOY).modo, F.anioFiscal(sim, '2026', HOY).ayudas], ['simulacion', 300]);
+  const E = conAyuda(ayuda('y1', '2027-03-10', 1000));
+  assert.equal(cas(MO.modelo130(E, '2027', 1, HOY))['01'], 2000);
+  const renta = MO.resumenRenta(E, '2027', HOY).secciones[0].filas;
+  assert.deepEqual(renta.filter((f) => /Subvenciones|Ingresos de explotación|Rendimiento neto/.test(f.nombre)).map((f) => f.valor), [1500, 1000, 1564.8]);
+  assert.ok(!MO.resumenRenta(A, '2027', HOY).secciones[0].filas.some((f) => /Subvenciones/.test(f.nombre)));   // sin ayudas no sale la línea
+  assert.ok(M.anios(conAyuda(ayuda('y3', '2031-01-01', 10))).includes('2031'));
+});
+await prueba('las ayudas viajan en las copias, con sus diferencias y su borrado', () => {
+  const E = conAyuda(ayuda('y1', '2027-03-10', 1000));
+  const items = C.comparar(M.estadoVacio(), E);
+  assert.deepEqual(items.filter((i) => i.col === 'ayudas').map((i) => [i.id, i.caso]), [['y1', 'nueva']]);
+  const B3 = C.fusionar(M.estadoVacio(), E, items, C.eleccionesPorDefecto(items));
+  assert.deepEqual(B3.ayudas.map((y) => [y.id, y.importe, y._base]), [['y1', 1000, 1]]);
+  const d = C.diferencias('ayudas', E.ayudas[0], { ...E.ayudas[0], importe: 1200, cuentaSS: false });
+  assert.deepEqual(d.map((x) => x.campo), ['Importe', 'Cuenta para la Seguridad Social']);
+});
+
+console.log('Fase 3B: libros registro');
+const tabla = (txt) => txt.replace(/^﻿/, '').trim().split('\r\n').map((l) => l.split(';'));
+await prueba('libro de facturas emitidas: una fila por factura de autónomo emitida; ni cooperativa ni sin cerrar; las ayudas al final', () => {
+  const E = conAyuda(ayuda('y1', '2027-03-10', 1000));
+  const t = tabla(libroEmitidas(E, '2027'));
+  assert.deepEqual(t[0].slice(0, 5), ['tipo', 'fecha_expedicion', 'numero', 'referencia', 'nif_cliente']);
+  // a1: 1.000 + 210 de IVA = 1.210; − 70 de retención = 1.140 a cobrar. a2: 500 + 105 = 605; − 35 = 570.
+  assert.deepEqual(t.slice(1).map((f) => [f[0], f[1], f[4], f[5], f[7], f[8], f[9], f[10], f[11], f[12], f[13], f[14]]), [
+    ['factura', '2027-02-10', '', 'Cliente', '1000', '21', '210', '1210', '7', '70', '1140', 'Pendiente de cobro'],
+    ['factura', '2027-05-05', '', 'Cliente', '500', '21', '105', '605', '7', '35', '570', 'Cobrada'],
+    ['ayuda (no es factura)', '2027-03-10', '', '', '1000', '0', '0', '1000', '0', '0', '1000', '']]);
+  assert.equal(tabla(libroEmitidas(E, '2026')).length, 1);                // 2026 es de cooperativa: solo la cabecera
+  assert.equal(tabla(libroEmitidas(M.estadoVacio(), '2027')).length, 1);  // sin fecha de alta no hay libros
+});
+await prueba('libro de facturas recibidas: IVA deducible y gasto de IRPF de cada gasto; lo que se amortiza remite al libro de bienes', () => {
+  const E = estadoAutonomo(); E.gastos.push(material('m1', '2027-03-01', 1000));
+  const t = tabla(libroRecibidas(E, '2027'));
+  assert.deepEqual(t.slice(1).map((f) => [f[0], f[1], f[5], f[7], f[8], f[9], f[10], f[11].slice(0, 2)]), [
+    ['2027-02-15', 'g1', '100', '21', '121', '21', '100', 'no'], ['2027-03-01', 'g2', '50', '10,5', '60,5', '5,25', '0', 'no'],
+    ['2027-03-01', 'm1', '1000', '210', '1210', '210', '', 'sí'], ['2027-04-10', 'g3', '200', '42', '242', '21', '221', 'no']]);
+});
+await prueba('libro de bienes de inversión: amortización del año, acumulada y pendiente', () => {
+  const E = estadoAutonomo(); E.gastos.push(material('m1', '2027-03-01', 1000));
+  // 2027: del 1 de marzo al 31 de diciembre van 306 días: 1.000 × 26 % × 306 / 365 = 217,97
+  let t = tabla(libroBienes(E, '2027', '2028-02-01'));
+  assert.deepEqual(t[1].slice(4), ['1000', '210', '210', '1000', '26', '217,97', '217,97', '782,03', 'no']);
+  // 2028 (bisiesto, año entero): 260,00; acumulado 477,97; quedan 522,03
+  t = tabla(libroBienes(E, '2028', '2029-01-10'));
+  assert.deepEqual([t[0][9], ...t[1].slice(9, 12)], ['amortizacion_2028', '260', '477,97', '522,03']);
+  assert.equal(tabla(libroBienes(E, '2026', '2028-02-01')).length, 1);     // aún no estaba comprado
+});
+
+console.log('Fase 3B: gráficos mes a mes');
+await prueba('mes a mes: lo que queda y lo que se aparta de cada mes, y las sumas cuadran con el año', () => {
+  const g = F.mesesDelAnio(A, '2027', HOY), [ene, feb, mar, abr, may, , jul] = g.meses;
+  // enero: sin facturas, solo la cuota (88,64) -> queda −88,64
+  assert.deepEqual([ene.n, ene.base, ene.impuestos, ene.neto], [0, 0, 88.64, -88.64]);
+  // febrero: 1.000 + 210 de IVA; se apartan 210 + 70 + 88,64 = 368,64; quedan 1.000 − 70 − 88,64 = 841,36; gasto pagado 121
+  assert.deepEqual([feb.n, feb.base, feb.iva, feb.irpf, feb.cuota, feb.impuestos, feb.neto, feb.total, feb.gastos], [1, 1000, 210, 70, 88.64, 368.64, 841.36, 1210, 121]);
+  assert.deepEqual([mar.gastos, abr.gastos, may.impuestos, may.neto], [60.5, 242, 228.64, 376.36]);
+  assert.deepEqual([jul.cuota, jul.neto, jul.impuestos], [0, 0, 0]);       // julio aún no ha llegado (hoy es 15 de junio)
+  const a = F.anioFiscal(A, '2027', HOY), T = g.total;
+  assert.deepEqual([T.base, T.iva, T.irpf, T.cuota, T.neto], [a.base, a.iva, a.irpfFacturas, a.cuota, a.neto]);
+  // año: se cobran 1.815 con IVA; se apartan 315 + 105 + 531,84 = 951,84; quedan 863,16 (el 47,56 %)
+  assert.deepEqual([T.total, T.impuestos, T.neto, T.gastos, Math.round(T.pctQueda * 100) / 100], [1815, 951.84, 863.16, 423.5, 47.56]);
+  assert.equal(F.mesesDelAnio(M.estadoVacio(), '2027', HOY).total.pctQueda, null);
 });
 
 const ruta = process.argv[2];

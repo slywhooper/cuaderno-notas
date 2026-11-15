@@ -2,7 +2,7 @@
 //
 // ESTADO (lo que se cifra y se guarda):
 // {
-//   esquema: 3,
+//   esquema: 4,
 //   ajustes:  { fechaAlta, avisoCopiaDias, fiscal: {...ver fiscalPorDefecto()}, _mod, _base },
 //   clientes: [{ id, nombre, plazo, _mod, _base, _borrado? }],
 //   facturas: [{ id, n, ref, clienteId, estado, fechaFactura, fechaCobro, neto, diasSS, nota,
@@ -11,8 +11,10 @@
 //                _mod, _base, _borrado? }],
 //   gastos:   [{ id, fecha, proveedor, numFactura, categoria, base, ivaPct, iva, dedIva, dedIrpf,
 //                justificante, nota, amortiza?, amortPct?,   <- material que se amortiza: % al año
-//                _mod, _base, _borrado? }]
-// }
+//                _mod, _base, _borrado? }],
+//   ayudas:   [{ id, fecha, concepto, importe, cuentaSS,     <- ayuda puntual (subvención de la actividad): ingreso para el
+//                _mod, _base, _borrado? }]                      IRPF en el año de su fecha; cuentaSS=false la deja fuera del
+// }                                                             beneficio que mira la Seguridad Social
 // RÉGIMEN: una factura es de AUTÓNOMO si hay ajustes.fechaAlta y su fecha de factura es igual o posterior.
 //          Si no, es de COOPERATIVA (neto apuntado a mano al cobrar, días cotizados).
 //          En una factura de autónomo el importe de cada servicio es la base SIN IVA y el neto se calcula.
@@ -25,7 +27,7 @@
 export const ESTADOS = { abierta: 'Sin cerrar', pendiente: 'Pendiente de cobro', cobrada: 'Cobrada' };
 export const MODALIDADES = ['Montaopera', 'Opera', 'Operador', 'Cámara', 'Realización'];
 
-export const ESQUEMA = 3; // 1: fase 1 · 2: ajustes fiscales y gastos · 3: amortización, difícil justificación, minoración // súbelo cuando cambie la forma de los datos y añade el paso en completar()
+export const ESQUEMA = 4; // 1: fase 1 · 2: ajustes fiscales y gastos · 3: amortización, difícil justificación, minoración · 4: ayudas // súbelo cuando cambie la forma de los datos y añade el paso en completar()
 
 export const EPIGRAFES = { profesional: 'Profesional (con retención)', artistica: 'Artística (con retención)', empresarial: 'Empresarial (sin retención)' };
 
@@ -91,7 +93,7 @@ export function fiscalPorDefecto() {
 }
 
 export function estadoVacio() {
-  return { esquema: ESQUEMA, ajustes: { fechaAlta: null, avisoCopiaDias: 7, fiscal: fiscalPorDefecto(), _mod: 0, _base: 0 }, clientes: [], facturas: [], gastos: [] };
+  return { esquema: ESQUEMA, ajustes: { fechaAlta: null, avisoCopiaDias: 7, fiscal: fiscalPorDefecto(), _mod: 0, _base: 0 }, clientes: [], facturas: [], gastos: [], ayudas: [] };
 }
 
 /** Rellena lo que le falte a un estado guardado con una versión anterior de la app (no borra nada). */
@@ -211,7 +213,7 @@ export function totales(facturas, ajustes = null) {
 
 export function anios(estado) {
   const s = new Set(vivos(estado.facturas).map(anioDe).filter(Boolean));
-  for (const g of vivos(estado.gastos || [])) if (g.fecha) s.add(g.fecha.slice(0, 4));
+  for (const g of [...vivos(estado.gastos || []), ...vivos(estado.ayudas || [])]) if (g.fecha) s.add(g.fecha.slice(0, 4));
   s.add(String(new Date().getFullYear()));
   return [...s].sort().reverse();
 }

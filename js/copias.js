@@ -13,7 +13,7 @@
 import { aB64, deB64, derivarClave, cifrar, descifrar } from './cripto.js';
 import { ESTADOS, bruto, textoPlazo } from './modelo.js';
 
-const COLECCIONES = ['clientes', 'facturas', 'gastos'];
+const COLECCIONES = ['clientes', 'facturas', 'gastos', 'ayudas'];
 
 export const esCopiaCifrada = (o) => !!o && o.app === 'mis-servicios-facturas' && o.tipo === 'copia-cifrada' && !!o.datos;
 
@@ -117,6 +117,9 @@ const ETIQUETAS_AJUSTES = {
   'fiscal.umbralInversionIva': 'Importe de bien de inversión (IVA)', 'fiscal.difJustPct': 'Gastos de difícil justificación %', 'fiscal.difJustMax': 'Tope de difícil justificación',
   'fiscal.minoracion130': 'Minoración del modelo 130', 'fiscal.reduccionInicio': 'Reducción por inicio de actividad', 'fiscal.reduccionInicioPct': 'Reducción por inicio %',
   'fiscal.amortizaciones': 'Tabla de amortización', 'fiscal.amortizacionLibreMax': 'Material como gasto normal hasta',
+  'fiscal.tarifaPlanaMeses': 'Meses de tarifa plana', 'fiscal.prorrogaMeses': 'Meses de prórroga', 'fiscal.smiAnual': 'Salario mínimo al año',
+  'fiscal.genericosSSPct': 'Descuento de gastos genéricos %', 'fiscal.prorrogaPedida': 'Prórroga de la tarifa plana pedida', 'fiscal.avisoTarifaDias': 'Aviso de tarifa plana (días)',
+  'fiscal.tipoCotizacionPct': 'Tipo de cotización %', 'fiscal.limiteCuota': 'Límite de cuota al mes', 'fiscal.tramosCuota': 'Tabla de tramos de cuota',
   'fiscal.cuotas': 'Cuota de autónomos', 'fiscal.categorias': 'Categorías de gasto', 'fiscal.confirmados': 'Valores confirmados', 'fiscal.presentados': 'Modelos presentados',
 };
 
@@ -140,6 +143,9 @@ export function diferencias(col, L, F, nombreCliente = (id) => id) {
     par('% deducible IVA', L.dedIva, F.dedIva); par('% deducible IRPF', L.dedIrpf, F.dedIrpf);
     par('Justificante guardado', L.justificante ? 'sí' : 'no', F.justificante ? 'sí' : 'no'); par('Nota', L.nota, F.nota);
     par('Se amortiza', L.amortiza ? 'sí' : 'no', F.amortiza ? 'sí' : 'no'); par('Amortización al año %', L.amortPct, F.amortPct);
+  } else if (col === 'ayudas') {
+    par('Fecha', L.fecha, F.fecha); par('Concepto', L.concepto, F.concepto); par('Importe', L.importe, F.importe);
+    par('Cuenta para la Seguridad Social', L.cuentaSS === false ? 'no' : 'sí', F.cuentaSS === false ? 'no' : 'sí');
   } else {
     // Ajustes: los sencillos se comparan tal cual; los fiscales, uno a uno (las listas, como «cambiado»).
     const texto = (v) => (v !== null && typeof v === 'object' ? estable(v) : v ?? null);

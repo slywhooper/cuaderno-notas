@@ -7,6 +7,7 @@ import { readFileSync, mkdirSync } from 'node:fs';
 import * as M from '../js/modelo.js';
 import * as F from '../js/fiscal.js';
 import * as MO from '../js/modelos.js';
+import { libroEmitidas, libroRecibidas, libroBienes } from '../js/csv.js';
 import { migrarCopiaV2 } from '../js/migracion.js';
 const { chromium } = await import(process.env.PLAYWRIGHT || 'playwright');
 
@@ -199,6 +200,43 @@ await ir(A, 'inicio');
 assert.equal(await A.locator('.banda', { hasText: 'tarifa plana' }).count(), 0);
 paso(`tarifa plana real: acaba el ${fCorta(tp.fin1)}, la prórroga se marca y se desmarca, y el aviso de Inicio sale con la antelación de ajustes`);
 
+// Ayuda puntual (fase 3B): se apunta en Más, sube el beneficio y la reserva, se puede dejar fuera de la Seguridad Social y borrar
+const sinAyuda = F.anioFiscal(esperado, anio);
+await ir(A, 'mas'); await A.click('[data-sub=ayudas]');
+await A.click('[data-accion=abrir-ayuda]');
+await A.fill('.dlg [name=importe]', ''); await A.click('.dlg-b .btn:last-child');
+assert.match(await texto(A, '.dlg .error'), /Escribe el importe/);
+await A.fill('.dlg [name=concepto]', 'Ayuda de prueba'); await A.fill('.dlg [name=importe]', '1.000'); await A.click('.dlg-b .btn:last-child');
+await A.waitForSelector('[data-accion=abrir-ayuda][data-id]:not([data-id=""])');
+assert.match(await texto(A, '.lista'), /Ayuda de prueba.*Cuenta para la Seguridad Social.*1\.000,00 €/);
+esperado.ayudas.push({ id: 'y-prueba', fecha: hoy, concepto: 'Ayuda de prueba', importe: 1000, cuentaSS: true, _mod: 1, _base: 0 });
+a = F.anioFiscal(esperado, anio); r = F.ritmoSS(esperado, anio);
+assert.equal(Math.round((a.rendimiento - sinAyuda.rendimiento) * 100) > 0, true);
+await impuestos(A);
+assert.equal(await texto(A, '.grande'), eur(sinAyuda.neto));                 // el neto no cambia con la ayuda
+assert.match(await texto(A, '.cuerpo'), new RegExp(`Ayudas y subvenciones ${re(eur(1000))}.*Beneficio para Hacienda ${re(eur(a.rendimiento))}`));
+assert.match(await texto(A, '[data-et=tarifa]'), new RegExp(`llevas ${re(eur(r.llevas))}.*De ello, ayudas ${re(eur(1000))} Sin las ayudas acabarías en ${re(eur(r.sinAyudas.proyeccion))}`));
+await A.click('[data-accion=imp][data-imp=modelos]'); await A.click('[data-accion=modelo][data-m=renta]');
+assert.match(await texto(A, '.cuerpo'), new RegExp(`Subvenciones corrientes \\(ayudas\\) ${re(eur(1000))}`));
+await foto(A, '19d-ayuda-renta', true);
+await A.click('[data-accion=modelo][data-m="303"]'); await A.click('[data-accion=imp][data-imp=resumen]'); // deja Impuestos como estaba
+await ir(A, 'mas'); await A.click('[data-sub=ayudas]'); await A.click('[data-accion=abrir-ayuda][data-id]:not([data-id=""])');
+await A.selectOption('.dlg [name=cuentaSS]', 'no'); await A.click('.dlg-b .btn:last-child');
+await A.waitForFunction(() => /No cuenta para la Seguridad Social/.test(document.querySelector('.lista')?.textContent || ''));
+esperado.ayudas[0].cuentaSS = false; r = F.ritmoSS(esperado, anio);
+await impuestos(A);
+assert.match(await texto(A, '[data-et=tarifa]'), new RegExp(`llevas ${re(eur(r.llevas))}`));
+assert.doesNotMatch(await texto(A, '[data-et=tarifa]'), /De ello, ayudas/);
+assert.match(await texto(A, '.cuerpo'), new RegExp(`Beneficio para Hacienda ${re(eur(a.rendimiento))}`)); // para Hacienda sigue contando
+await ir(A, 'mas'); await A.click('[data-sub=ayudas]'); await A.click('[data-accion=abrir-ayuda][data-id]:not([data-id=""])');
+await A.click('.dlg-b .btn.peligro');
+await A.waitForFunction(() => /No hay ayudas apuntadas/.test(document.querySelector('.lista')?.textContent || ''));
+esperado.ayudas.length = 0; a = F.anioFiscal(esperado, anio);
+await impuestos(A);
+assert.match(await texto(A, '.cuerpo'), new RegExp(`Beneficio para Hacienda ${re(eur(sinAyuda.rendimiento))}`));
+assert.doesNotMatch(await texto(A, '.cuerpo'), /Ayudas y subvenciones/);
+paso('ayuda puntual: sube el beneficio y sale en la renta sin tocar el neto; se deja fuera de la Seguridad Social y se borra');
+
 // Factura de autónomo: 1.000 € -> IVA 210, retención 70, entran 1.140, neto 930
 await A.click('.fab'); await A.waitForSelector('.hoja');
 const cliente = await A.locator('[data-campo=clienteId] option').nth(1).getAttribute('value');
@@ -272,6 +310,43 @@ assert.match(await texto(A, '.cuerpo'), new RegExp(esc(`Amortización del materi
 await A.click('[data-accion=imp][data-imp=modelos]'); await A.click('[data-accion=modelo][data-m="303"]');
 await comparar(A, MO.modelo303(esperado, anio, q));
 paso(`material que se amortiza: su IVA se deduce entero y al IRPF entra poco a poco (${eur(a.amortizacion)} hasta hoy)`);
+
+// Libros registro (fase 3B): tres CSV del año con tantas filas como dice la lógica
+await ir(A, 'mas'); await A.click('[data-sub=copias]');
+await A.selectOption('[data-libro-anio]', anio);
+const filasLibro = (txt) => txt.replace(/^﻿/, '').trim().split('\r\n');
+const libros = {};
+for (const [cual, fn] of [['emitidas', libroEmitidas], ['recibidas', libroRecibidas], ['bienes', libroBienes]]) {
+  await A.click(`[data-accion=exportar-libro][data-libro=${cual}]`);
+  const [d] = await Promise.all([A.waitForEvent('download'), A.click('.dlg-b .btn:last-child')]);
+  assert.equal(d.suggestedFilename(), `libro-${cual}-${anio}.csv`);
+  await d.saveAs(`${salida}/libro-${cual}.csv`);
+  libros[cual] = filasLibro(readFileSync(`${salida}/libro-${cual}.csv`, 'utf8'));
+  assert.equal(libros[cual].length, filasLibro(fn(esperado, anio)).length, `filas del libro de ${cual}`);
+  assert.equal(libros[cual][0], filasLibro(fn(esperado, anio))[0]);
+}
+assert.ok(libros.emitidas.length > 2 && libros.recibidas.length > 1 && libros.bienes.length === 2);
+assert.equal(libros.bienes[1], filasLibro(libroBienes(esperado, anio))[1].replace(/^[^;]*;[^;]*;[^;]*;[^;]*/, libros.bienes[1].split(';').slice(0, 4).join(';'))); // mismas cifras
+await foto(A, '22b-libros', true);
+paso(`libros registro de ${anio}: ${libros.emitidas.length - 1} facturas emitidas, ${libros.recibidas.length - 1} recibidas y ${libros.bienes.length - 1} bien de inversión`);
+
+// Gráficos (fase 3B): el reparto y el mes elegido coinciden con la lógica; tocar otro mes cambia el detalle
+let gm = F.mesesDelAnio(esperado, anio), mesHoy = Number(hoy.slice(5, 7));
+await impuestos(A, 'graficos');
+assert.match(await texto(A, '[data-et=reparto]'), new RegExp(`${re(eur(Math.round(gm.total.pctQueda * 100) / 100))} te quedan.*Cobrado con IVA ${re(eur(gm.total.total))}.*Te queda \\(neto\\) ${re(eur(gm.total.neto))}`));
+assert.equal(await A.locator('svg.grafico .g-col').count(), 12);
+assert.ok(await A.locator('svg.grafico path.g-neto').count() >= 1);
+assert.match(await texto(A, '[data-et=mes]'), new RegExp(`${re(eur(gm.meses[mesHoy - 1].neto))} te queda.*IRPF ${re(eur(gm.meses[mesHoy - 1].irpf))}`));
+assert.ok(await A.locator('.lista .fila').count() >= 1);              // las facturas del mes, editables desde aquí
+await foto(A, '22c-graficos', true);
+await A.locator(`svg.grafico .g-col[data-mes="${mesHoy - 1}"]`).click();
+assert.match(await texto(A, '[data-et=mes]'), new RegExp(`${re(eur(gm.meses[mesHoy - 2].neto))} te queda.*Cuota de autónomos ${re(eur(gm.meses[mesHoy - 2].cuota))}`));
+await A.click('.g-det summary');
+assert.match(await texto(A, '.g-det'), new RegExp(`Año ${re(eur(gm.total.neto))} ${re(eur(gm.total.gastos))} ${re(eur(gm.total.impuestos))}`));
+await A.click('.g-det [data-accion=mes][data-mes="1"]');
+assert.match(await texto(A, '[data-et=mes]'), new RegExp(`^ENERO ${anio} ${re(eur(gm.meses[0].neto))} te queda`, 'i'));
+await A.click('[data-accion=imp][data-imp=resumen]');
+paso(`gráficos de ${anio}: te queda el ${Math.round(gm.total.pctQueda)} % de lo cobrado; el detalle del mes cambia al tocar el gráfico o la tabla`);
 
 // ---------- PC ----------
 console.log('PC (B)');

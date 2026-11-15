@@ -69,7 +69,7 @@ export function modelo130(estado, anio, q, hoy) {
   if (t.acum.amortizacion) partes.push(`amortización ${p(t.acum.amortizacion)} €`);
   if (t.acum.dificil) partes.push(`gastos de difícil justificación ${p(t.acum.dificil)} € (el ${p(f.difJustPct)} % del beneficio, con tope de ${p(f.difJustMax)} € al año)`);
   const c = [
-    fila('01', 'Ingresos computables', k['01'], `Lo facturado sin IVA desde el 1 de enero hasta el final del ${q}T. Facturas emitidas, por fecha de factura.`),
+    fila('01', 'Ingresos computables', k['01'], `Lo facturado sin IVA desde el 1 de enero hasta el final del ${q}T. Facturas emitidas, por fecha de factura.${t.acum.ayudas ? ` Incluye ${p(t.acum.ayudas)} € de ayudas apuntadas en Más → Ayudas y subvenciones.` : ''}`),
     fila('02', 'Gastos fiscalmente deducibles', k['02'], `Desde el 1 de enero: ${partes.join(' + ')}.`),
     fila('03', 'Rendimiento neto', k['03'], 'Casilla 01 − casilla 02. Si sale negativo, va con signo menos.', true),
     fila('04', `${p(f.pagoFraccionadoPct)} % de la casilla 03`, k['04'], 'Si la casilla 03 es negativa, aquí va cero.'),
@@ -141,6 +141,7 @@ export function resumenRenta(estado, anio, hoy) {
   }
   const act = [
     fila('', 'Ingresos de explotación', a.base, 'Todo lo facturado en el año sin IVA (facturas emitidas, por fecha de factura). En Renta Web: ingresos de explotación / prestación de servicios.', true),
+    ...(a.ayudas ? [fila('', 'Subvenciones corrientes (ayudas)', a.ayudas, 'Las ayudas que apuntaste en Más → Ayudas y subvenciones con fecha de este año. En Renta Web van como otros ingresos de la actividad (subvenciones). No hay un criterio oficial publicado sobre la ayuda de Garantía Juvenil en concreto: confirma con quien te la concede cómo y en qué año tributa.')] : []),
     fila('', 'Seguridad Social del titular', a.cuota, `La cuota de autónomos de ${a.mesesCuota} meses, según los tramos de tus ajustes. Compárala con tus recibos.`),
     ...[...por].map(([id, c]) => fila('', cats.get(id) || 'Sin categoría', e(c), 'Tus gastos de esta categoría en la parte deducible en el IRPF. En Renta Web repártelos en el concepto que mejor encaje (suministros, otros servicios exteriores, otros gastos…).')),
   ];

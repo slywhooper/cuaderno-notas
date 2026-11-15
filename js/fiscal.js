@@ -19,6 +19,9 @@
 //    Gastos de difícil justificación: % del beneficio (antes de ellos) con tope anual; van dentro de los gastos.
 //    El modelo 130 se calcula casilla a casilla (01-07 y 12-19), con la minoración de la casilla 13 según el
 //    beneficio del año anterior (sin año anterior cuenta como 0) y los resultados negativos de trimestres anteriores.
+//  - Fase 3B: una ayuda (estado.ayudas) es ingreso de la actividad en el trimestre de su fecha: entra en el beneficio,
+//    en la casilla 01 del modelo 130 y en la reserva de la renta. No lleva IVA ni retención, no es «facturado» y no
+//    cambia el neto. Cuenta como ingreso SIN retención para la regla del 70 % (criterio prudente).
 
 import { vivos, cent, bruto, fechaISO, hoyISO, anioDe, fechaDeFactura, esAutonomo, desglose } from './modelo.js';
 
@@ -82,7 +85,7 @@ export function cuotaPagada(estado, anio, hoy = hoyISO()) {
 const diasDelAnio = (a) => (new Date(a, 1, 29).getMonth() === 1 ? 366 : 365);
 const diasEntre = (desde, hasta) => Math.round((new Date(hasta + 'T12:00:00') - new Date(desde + 'T12:00:00')) / 864e5) + 1;
 /** Valor que se amortiza de un gasto: lo pagado sin el IVA deducible, en la parte afecta a la actividad (céntimos). */
-function valorAmortizable(g, fiscal) {
+export function valorAmortizable(g, fiscal) {
   const base = cent(g.base), iva = cent(g.iva);
   const ivaDed = fiscal.regimenIva === 'franquicia' ? 0 : Math.round(iva * pct(g.dedIva) / 100);
   return Math.round((base + iva - ivaDed) * pct(g.dedIrpf) / 100);
@@ -113,6 +116,7 @@ function ingresosReales(estado, anio) {
     const d = desglose(f, estado.ajustes.fiscal);
     ing += cent(d.base); if (d.retPct > 0) conRet += cent(d.base);
   }
+  for (const y of vivos(estado.ayudas || [])) if (y.fecha && y.fecha.slice(0, 4) === anio && y.fecha >= (estado.ajustes.fechaAlta || '9')) ing += cent(y.importe);
   return { ing, conRet };
 }
 /** Minoración del modelo 130 (casilla 13) según el beneficio del año anterior, en céntimos. Sin año anterior cuenta como 0. */
@@ -130,7 +134,9 @@ const finTrimestre = (anio, q) => fechaISO(new Date(Number(anio), q * 3, 0));
  *          iva303 (resultado del trimestre), compensa (lo que arrastra del anterior, ≤ 0), aIngresar303,
  *          acum: { ingresos, gastosDirectos, cuota, amortizacion, dificil, gastos, retenciones, rendimiento },
  *          pctRetenido, obligado130, c130: { 01..07, 12..19 } (casillas), previo130 (casilla 05), pago130 }
+ * t[q].ayudas y out.ayudas = ayudas del periodo; t[q].base y out.base siguen siendo solo lo facturado.
  * opciones.sinAnterior evita mirar el año anterior (lo usa la propia función para no encadenar años sin fin).
+ * opciones.ayudas: 'ss' = solo las ayudas que cuentan para la Seguridad Social · 'no' = ninguna (por defecto, todas).
  */
 export function anioFiscal(estado, anio, hoy = hoyISO(), opciones = {}) {
   anio = String(anio);
@@ -140,7 +146,7 @@ export function anioFiscal(estado, anio, hoy = hoyISO(), opciones = {}) {
   const general = fiscal.regimenIva !== 'franquicia';
 
   const T = [1, 2, 3, 4].map((q) => ({ q, n: 0, base: 0, iva: 0, retencion: 0, conRetencion: 0, neto: 0, porTipo: {}, nGastos: 0,
-    corrientes: { base: 0, cuota: 0 }, inversion: { base: 0, cuota: 0 }, ivaDeducible: 0, gastoIrpf: 0, amortizacion: 0, cuota: 0, meses: 0 }));
+    corrientes: { base: 0, cuota: 0 }, inversion: { base: 0, cuota: 0 }, ivaDeducible: 0, gastoIrpf: 0, amortizacion: 0, cuota: 0, meses: 0, ayudas: 0 }));
   let n = 0, sinCerrar = 0;
   for (const f of vivos(estado.facturas)) {
     if (anioDe(f) !== anio || !(sim || esAutonomo(f, ajustes))) continue;
@@ -165,6 +171,10 @@ export function anioFiscal(estado, anio, hoy = hoyISO(), opciones = {}) {
       grupo.base += cent(g.base); grupo.cuota += cent(c.ivaDed);
     }
   }
+  for (const y of vivos(estado.ayudas || [])) {
+    if (!cuenta(y) || y.fecha.slice(0, 4) !== anio || opciones.ayudas === 'no' || (opciones.ayudas === 'ss' && y.cuentaSS === false)) continue;
+    T[trimestreDe(y.fecha) - 1].ayudas += cent(y.importe);
+  }
   for (const m of mesesConCuota(estado, anio, hoy, sim)) { const t = T[Math.ceil(m / 3) - 1]; t.cuota += cent(cuotaMes(fiscal, anio, m, sim)); t.meses++; }
 
   // Regla del 70 % y minoración: mandan los datos del año anterior si hubo actividad real; si no, cuenta como «sin actividad».
@@ -173,7 +183,7 @@ export function anioFiscal(estado, anio, hoy = hoyISO(), opciones = {}) {
   const c13 = minoracion(fiscal, rendAnterior);
   const empresarial = fiscal.epigrafe === 'empresarial';
   const empezado = (q) => `${anio}-${dos((q - 1) * 3 + 1)}-01` <= hoy;
-  let arrastre = 0, ing = 0, directos = 0, cuo = 0, ret = 0, conRet = 0, amortPrev = 0, sum07 = 0, negativos = 0, pagado = 0, rend = 0, dificil = 0;
+  let ayu = 0, arrastre = 0, ing = 0, directos = 0, cuo = 0, ret = 0, conRet = 0, amortPrev = 0, sum07 = 0, negativos = 0, pagado = 0, rend = 0, dificil = 0;
   for (const t of T) {
     // IVA (modelo 303)
     t.iva303 = general ? t.iva - t.ivaDeducible : 0;
@@ -182,17 +192,17 @@ export function anioFiscal(estado, anio, hoy = hoyISO(), opciones = {}) {
     const r = t.iva303 + arrastre;
     t.aIngresar303 = Math.max(0, r); arrastre = Math.min(0, r);
     // IRPF: acumulado desde enero
-    ing += t.base; directos += t.gastoIrpf; cuo += t.cuota; ret += t.retencion; conRet += t.conRetencion;
+    ing += t.base; ayu += t.ayudas; directos += t.gastoIrpf; cuo += t.cuota; ret += t.retencion; conRet += t.conRetencion;
     const fin = finTrimestre(anio, t.q) < hoy || anio < hoy.slice(0, 4) ? finTrimestre(anio, t.q) : hoy; // lo aún no transcurrido no se amortiza
     const amortAcum = empezado(t.q) ? amortizables.reduce((a, g) => a + amortizadoEnAnio(g, fiscal, anio, fin), 0) : amortPrev;
     t.amortizacion = amortAcum - amortPrev; amortPrev = amortAcum;
-    const antes = ing - directos - cuo - amortAcum;                    // beneficio antes de los gastos de difícil justificación
+    const antes = ing + ayu - directos - cuo - amortAcum;                    // beneficio antes de los gastos de difícil justificación
     dificil = Math.min(cent(fiscal.difJustMax), Math.max(0, Math.round(antes * pct(fiscal.difJustPct) / 100)));
     rend = antes - dificil;
     // Modelo 130, casilla a casilla
-    t.pctRetenido = previo.ing > 0 ? previo.conRet / previo.ing * 100 : ing > 0 ? conRet / ing * 100 : (empresarial ? 0 : 100);
+    t.pctRetenido = previo.ing > 0 ? previo.conRet / previo.ing * 100 : ing + ayu > 0 ? conRet / (ing + ayu) * 100 : (empresarial ? 0 : 100);
     t.obligado130 = empresarial || t.pctRetenido < pct(fiscal.umbralRetenidoPct);
-    const c = { '01': ing, '02': ing - rend, '03': rend, '04': Math.max(0, Math.round(rend * pct(fiscal.pagoFraccionadoPct) / 100)), '05': sum07, '06': ret };
+    const c = { '01': ing + ayu, '02': ing + ayu - rend, '03': rend, '04': Math.max(0, Math.round(rend * pct(fiscal.pagoFraccionadoPct) / 100)), '05': sum07, '06': ret };
     c['07'] = c['04'] - c['05'] - c['06'];
     c['12'] = Math.max(0, c['07']); c['13'] = c13; c['14'] = c['12'] - c['13'];
     c['15'] = c['14'] > 0 ? Math.min(c['14'], negativos) : 0; c['16'] = 0;
@@ -201,8 +211,8 @@ export function anioFiscal(estado, anio, hoy = hoyISO(), opciones = {}) {
     t.pago130 = t.obligado130 ? Math.max(0, c['19']) : 0;
     if (t.obligado130) { sum07 += Math.max(0, c['07']); negativos += c['19'] < 0 ? -c['19'] : -c['15']; pagado += t.pago130; }
     t.c130 = Object.fromEntries(Object.entries(c).map(([k, v]) => [k, v / 100]));
-    t.acum = { ingresos: ing / 100, gastosDirectos: directos / 100, cuota: cuo / 100, amortizacion: amortAcum / 100, dificil: dificil / 100,
-      gastos: (ing - rend) / 100, retenciones: ret / 100, rendimiento: rend / 100 };
+    t.acum = { ingresos: (ing + ayu) / 100, ayudas: ayu / 100, gastosDirectos: directos / 100, cuota: cuo / 100, amortizacion: amortAcum / 100, dificil: dificil / 100,
+      gastos: (ing + ayu - rend) / 100, retenciones: ret / 100, rendimiento: rend / 100 };
   }
 
   const suma = (k) => T.reduce((a, t) => a + t[k], 0);
@@ -210,18 +220,54 @@ export function anioFiscal(estado, anio, hoy = hoyISO(), opciones = {}) {
   const reservaRenta = Math.max(0, Math.round(Math.max(0, rend) * pct(fiscal.reservaRentaPct) / 100) - ret - pagado);
   const out = {
     anio, modo, subidaPct, n, sinCerrar, general,
-    base: ing / 100, iva: suma('iva') / 100, ivaDeducible: suma('ivaDeducible') / 100, retencion: ret / 100,
+    base: ing / 100, ayudas: ayu / 100, iva: suma('iva') / 100, ivaDeducible: suma('ivaDeducible') / 100, retencion: ret / 100,
     nGastos: suma('nGastos'), gastoIrpf: directos / 100, amortizacion: amortPrev / 100, dificil: dificil / 100, cuota: cuo / 100, mesesCuota: suma('meses'),
     rendimiento: rend / 100, total303: suma('aIngresar303') / 100, aDevolver303: -arrastre / 100, total130: pagado / 100, minoracion130: c13 / 100,
     obligado130: T.some((t) => t.obligado130), reservaRenta: reservaRenta / 100,
     netoFacturas: neto / 100, neto: (neto - cuo) / 100, irpfFacturas: (ing - neto) / 100,
   };
   for (const t of T) {
-    for (const k of ['base', 'iva', 'retencion', 'conRetencion', 'neto', 'ivaDeducible', 'gastoIrpf', 'amortizacion', 'cuota', 'iva303', 'compensa', 'aIngresar303', 'previo130', 'pago130']) t[k] /= 100;
+    for (const k of ['ayudas', 'base', 'iva', 'retencion', 'conRetencion', 'neto', 'ivaDeducible', 'gastoIrpf', 'amortizacion', 'cuota', 'iva303', 'compensa', 'aIngresar303', 'previo130', 'pago130']) t[k] /= 100;
     for (const g of [t.corrientes, t.inversion, ...Object.values(t.porTipo)]) { g.base /= 100; g.cuota /= 100; }
   }
   out.t = T;
   return out;
+}
+
+// ---------- mes a mes (gráficos) ----------
+/**
+ * Lo facturado de un año repartido por meses (por fecha de factura), con las mismas reglas que anioFiscal().
+ * Cada mes: { m, n, base, iva, irpf, cuota, impuestos (= iva + irpf + cuota: lo que hay que apartar de lo cobrado),
+ *   neto (= base − irpf − cuota: lo que queda), total (= base + iva: lo cobrado con IVA), gastos (lo pagado, con su IVA), nGastos }.
+ * total: las mismas sumas del año y pctQueda (neto / total × 100; null si no hay nada facturado).
+ * Las ayudas no entran: no son facturado. Los gastos van aparte: no se restan del neto (regla de la app).
+ */
+export function mesesDelAnio(estado, anio, hoy = hoyISO()) {
+  anio = String(anio);
+  const { ajustes } = estado, fiscal = ajustes.fiscal, modo = modoDe(estado, anio), sim = modo === 'simulacion';
+  const subidaPct = sim ? pct(fiscal.subidaSimPct) : 0;
+  const ms = Array.from({ length: 12 }, (_, i) => ({ m: i + 1, n: 0, base: 0, iva: 0, irpf: 0, cuota: 0, gastos: 0, nGastos: 0 }));
+  for (const f of vivos(estado.facturas)) {
+    if (f.estado === 'abierta' || anioDe(f) !== anio || !(sim || esAutonomo(f, ajustes))) continue;
+    const d = sim ? desglose({ servicios: f.servicios }, fiscal, { subidaPct }) : desglose(f, fiscal);
+    const x = ms[Number(fechaDeFactura(f).slice(5, 7)) - 1];
+    x.n++; x.base += cent(d.base); x.iva += cent(d.iva); x.irpf += cent(d.base) - cent(d.neto);
+  }
+  for (const g of vivos(estado.gastos || [])) {
+    if (!g.fecha || g.fecha.slice(0, 4) !== anio || !(sim || g.fecha >= ajustes.fechaAlta)) continue;
+    const x = ms[Number(g.fecha.slice(5, 7)) - 1];
+    x.gastos += cent(calculoGasto(g, fiscal).total); x.nGastos++;
+  }
+  for (const m of mesesConCuota(estado, anio, hoy, sim)) ms[m - 1].cuota += cent(cuotaMes(fiscal, anio, m, sim));
+  const total = { n: 0, base: 0, iva: 0, irpf: 0, cuota: 0, gastos: 0, nGastos: 0, impuestos: 0, neto: 0, total: 0 };
+  for (const x of ms) {
+    x.impuestos = x.iva + x.irpf + x.cuota; x.neto = x.base - x.irpf - x.cuota; x.total = x.base + x.iva;
+    for (const k of Object.keys(total)) total[k] += x[k];
+    for (const k of ['base', 'iva', 'irpf', 'cuota', 'gastos', 'impuestos', 'neto', 'total']) x[k] /= 100;
+  }
+  for (const k of ['base', 'iva', 'irpf', 'cuota', 'gastos', 'impuestos', 'neto', 'total']) total[k] /= 100;
+  total.pctQueda = total.total > 0 ? total.neto / total.total * 100 : null;
+  return { anio, modo, meses: ms, total };
 }
 
 // ---------- tarifa plana ----------
@@ -248,19 +294,24 @@ function finPeriodo(inicio, meses) {
  * Beneficio para la Seguridad Social de un año frente al salario mínimo.
  * { anio, modo, llevas, proyeccion (a este ritmo, al acabar el año), smi, cerrado, cumple (proyección < salario mínimo),
  *   rendimiento, cuota (de dónde sale: beneficio fiscal y cuota pagada), dias (días de actividad del año),
- *   dificilEnTope (los gastos de difícil justificación ya están en su tope: un gasto más baja el beneficio entero) }
+ *   dificilEnTope (los gastos de difícil justificación ya están en su tope: un gasto más baja el beneficio entero),
+ *   ayudas (las que cuentan para la Seguridad Social), sinAyudas { llevas, proyeccion, cumple }, soloPorAyudas (pasa del
+ *   salario mínimo solo por las ayudas) }
  */
 export function ritmoSS(estado, anio, hoy = hoyISO()) {
   anio = String(anio);
-  const { fiscal, fechaAlta } = estado.ajustes, a = anioFiscal(estado, anio, hoy);
-  const llevas = beneficioSS(a, fiscal), smi = pct(fiscal.smiAnual);
+  const { fiscal, fechaAlta } = estado.ajustes, a = anioFiscal(estado, anio, hoy, { ayudas: 'ss' });
+  const a0 = a.ayudas ? anioFiscal(estado, anio, hoy, { ayudas: 'no' }) : a;   // sin ayudas: lo único que se alarga «a este ritmo»
+  const llevas = beneficioSS(a, fiscal), llevas0 = beneficioSS(a0, fiscal), smi = pct(fiscal.smiAnual);
   const cerrado = anio < hoy.slice(0, 4), futuro = anio > hoy.slice(0, 4);
   const ini = a.modo === 'real' && fechaAlta.slice(0, 4) === anio ? fechaAlta : `${anio}-01-01`;
-  let proyeccion = llevas;
-  if (!cerrado && !futuro && hoy >= ini) proyeccion = Math.round(cent(llevas) * diasEntre(ini, `${anio}-12-31`) / diasEntre(ini, hoy)) / 100;
-  const capado = cent(a.dificil) > 0 && cent(a.dificil) * (cent(llevas) > 0 ? cent(proyeccion) / cent(llevas) : 1) >= cent(fiscal.difJustMax);
+  let proy0 = llevas0;
+  if (!cerrado && !futuro && hoy >= ini) proy0 = Math.round(cent(llevas0) * diasEntre(ini, `${anio}-12-31`) / diasEntre(ini, hoy)) / 100;
+  const proyeccion = (cent(proy0) + cent(llevas) - cent(llevas0)) / 100;       // la ayuda es puntual: se suma una vez, no se alarga
+  const capado = cent(a.dificil) > 0 && cent(a.dificil) * (cent(llevas0) > 0 ? cent(proy0) / cent(llevas0) : 1) >= cent(fiscal.difJustMax);
   return { anio, modo: a.modo, llevas, proyeccion, smi, cerrado, futuro, cumple: proyeccion < smi, rendimiento: a.rendimiento, cuota: a.cuota,
-    dias: diasEntre(ini, `${anio}-12-31`), dificilEnTope: capado };
+    dias: diasEntre(ini, `${anio}-12-31`), dificilEnTope: capado,
+    ayudas: a.ayudas, sinAyudas: { llevas: llevas0, proyeccion: proy0, cumple: proy0 < smi }, soloPorAyudas: !(proyeccion < smi) && proy0 < smi };
 }
 /**
  * Tarifa plana: cuándo acaba y si se cumple el requisito de la prórroga. null sin fecha de alta.

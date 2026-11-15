@@ -15,9 +15,9 @@ import * as C from './copias.js';
 import { migrarCopiaV2, esCopiaAntigua } from './migracion.js';
 import * as F from './fiscal.js';
 import * as MO from './modelos.js';
-import { aCSV, gastosCSV } from './csv.js';
+import { aCSV, gastosCSV, libroEmitidas, libroRecibidas, libroBienes } from './csv.js';
 
-const VERSION = '1.2.2'; // cambiar también en sw.js
+const VERSION = '1.3.0'; // cambiar también en sw.js
 const MIN_CLAVE = 4; // decisión del usuario: código corto tipo PIN (él sabe que una copia así se puede forzar)
 
 const S = {
@@ -26,7 +26,7 @@ const S = {
   vista: 'inicio', sub: null,                 // pestaña y subpantalla de "Más"
   anio: String(new Date().getFullYear()),     // año elegido o 'todo'
   f: { q: '', cliente: '', estado: '' },      // filtros de la lista de facturas
-  imp: 'resumen', trim: 0, modelo: '303',     // apartado de Impuestos, trimestre elegido (0 = el actual) y modelo
+  imp: 'resumen', trim: 0, modelo: '303', mes: 0,     // apartado de Impuestos, trimestre elegido (0 = el actual) y modelo
   hoja: null,                                 // ficha abierta: { tipo, datos, ... }
   instantaneas: [],
 };
@@ -45,12 +45,13 @@ const numEntrada = (n) => (n == null ? '' : String(n).replace('.', ','));
 function leerNumero(txt) {
   let s = String(txt ?? '').trim().replace(/\s|€/g, '');
   if (!s) return null;
-  if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');
+  if (s.includes(',') || /^-?\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g, '').replace(',', '.'); // «1.000» son mil, no uno
   const n = Number(s);
   return Number.isFinite(n) ? n : null;
 }
 
 const facturas = () => M.vivos(S.estado.facturas);
+const libroAnio = () => S.libroAnio || (S.anio === 'todo' ? M.hoyISO().slice(0, 4) : S.anio);
 const clientes = () => M.vivos(S.estado.clientes).sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
 const mapaClientes = () => new Map(S.estado.clientes.map((c) => [c.id, c]));
 const nombreCliente = (id) => mapaClientes().get(id)?.nombre || 'Sin cliente';
@@ -358,10 +359,10 @@ const VISTAS = {
     const alta = S.estado.ajustes.fechaAlta, anio = anioFiscalElegido();
     const lista = [...new Set([...M.anios(S.estado), ...(alta ? [alta.slice(0, 4)] : [])])].sort().reverse();
     const a = F.anioFiscal(S.estado, anio), sim = a.modo === 'simulacion', fi = fiscal();
-    const tabs = `<div class="chips seg" role="group" aria-label="Apartado">${[['resumen', 'Resumen'], ['trimestres', 'Trimestres'], ['modelos', 'Modelos'], ['calendario', 'Plazos']].map(([id, txt]) =>
+    const tabs = `<div class="chips seg" role="group" aria-label="Apartado">${[['resumen', 'Resumen'], ['graficos', 'Gráficos'], ['trimestres', 'Trimestres'], ['modelos', 'Modelos'], ['calendario', 'Plazos']].map(([id, txt]) =>
       `<button data-accion="imp" data-imp="${id}" class="chip ${S.imp === id ? 'activa' : ''}" aria-pressed="${S.imp === id}">${txt}</button>`).join('')}</div>`;
     const banda = sim ? `<button class="banda sim" data-accion="sub" data-sub="fiscal"><b>Simulación.</b> ${anio} como si hubieras sido autónomo: ${esc(M.EPIGRAFES[fi.epigrafe] || '').toLowerCase()}${a.subidaPct ? `, tarifa +${numEntrada(a.subidaPct)} %` : ''}. Cambiar ›</button>` : '';
-    const cuerpo = S.imp === 'trimestres' ? impTrimestres(a) : S.imp === 'modelos' ? impModelos(a) : S.imp === 'calendario' ? impCalendario(a) : impResumen(a);
+    const cuerpo = S.imp === 'graficos' ? impGraficos(a) : S.imp === 'trimestres' ? impTrimestres(a) : S.imp === 'modelos' ? impModelos(a) : S.imp === 'calendario' ? impCalendario(a) : impResumen(a);
     return { titulo: 'Impuestos', cab: chipsAnio(lista, anio) + tabs, html: banda + cuerpo };
   },
 
@@ -371,6 +372,7 @@ const VISTAS = {
     return { titulo: 'Más', html: `<div class="lista">
       ${item('resumen', 'Resumen por año y días cotizados', 'Neto, facturado y días cotizados de cada año')}
       ${item('clientes', 'Clientes', 'Nombres y plazos de cobro')}
+      ${item('ayudas', 'Ayudas y subvenciones', 'Una ayuda puntual que cuenta como ingreso para la renta')}
       ${item('fiscal', 'Ajustes de autónomo', 'Fecha de alta, epígrafe, IVA, IRPF, cuota y categorías de gasto')}
       ${item('copias', 'Copias de seguridad', 'Exportar, importar, CSV')}
       ${item('seguridad', 'Código de acceso', 'Cambiar el código, cerrar la app con código')}
@@ -390,12 +392,74 @@ function barraReparto(a) {
     <div class="leyenda mini"><span class="l-neto">Neto ${Math.round(neto)} %</span><span class="l-irpf">IRPF ${Math.round(irpf)} %</span><span class="l-cuota">Cuota ${Math.round(cuota)} %</span></div>`;
 }
 
+// --- Gráficos (fase 3B). SVG hecho a mano: sin librerías y sin estilos en línea (los colores van por clase en app.css). ---
+const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+const SERIES = [['neto', 'Te queda (neto)'], ['gastos', 'Gastos'], ['impuestos', 'Impuestos y cuota']];
+/** Barras de los 12 meses: neto, gastos e impuestos, en un solo eje de euros. Tocar un mes lo elige. */
+function graficoMeses(g, sel) {
+  const W = 360, H = 190, L = 34, T = 10, pw = W - L - 4, ph = H - T - 22, n1 = (x) => x.toFixed(1);
+  const vals = g.meses.flatMap((x) => SERIES.map(([k]) => x[k]));
+  const max = Math.max(1, ...vals), min = Math.min(0, ...vals);
+  const bruto = (max - min) / 3, pot = 10 ** Math.floor(Math.log10(bruto)), paso = [1, 2, 5, 10].find((k) => k * pot >= bruto) * pot;
+  const top = Math.ceil(max / paso) * paso, bot = Math.floor(min / paso) * paso;
+  const y = (v) => T + ph * (top - v) / (top - bot);
+  const corto = (v) => (Math.abs(v) >= 1000 ? String(v / 1000).replace('.', ',') + 'k' : String(v));
+  let rejilla = '';
+  for (let v = bot; v <= top + 1e-9; v += paso) rejilla += `<line class="g-rej${Math.abs(v) < 1e-9 ? ' g-cero' : ''}" x1="${L}" x2="${W - 4}" y1="${n1(y(v))}" y2="${n1(y(v))}"/><text class="g-tick" x="${L - 5}" y="${n1(y(v) + 3)}" text-anchor="end">${corto(Math.round(v))}</text>`;
+  const gw = pw / 12, bw = 6.5, hueco = 2, x0 = (i) => L + i * gw + (gw - (3 * bw + 2 * hueco)) / 2;
+  const barra = (x, v) => {                     // extremo redondeado en el lado del dato, apoyada en la línea del cero
+    const y0 = y(0), y1 = y(v), h = Math.abs(y1 - y0);
+    if (h < 0.4) return '';
+    const r = Math.min(2, h), s = v >= 0 ? 1 : -1;
+    return `M${n1(x)},${n1(y0)}V${n1(y1 + s * r)}Q${n1(x)},${n1(y1)} ${n1(x + r)},${n1(y1)}H${n1(x + bw - r)}Q${n1(x + bw)},${n1(y1)} ${n1(x + bw)},${n1(y1 + s * r)}V${n1(y0)}Z`;
+  };
+  const barras = g.meses.map((x, i) => SERIES.map(([k], j) => { const d = barra(x0(i) + j * (bw + hueco), x[k]); return d ? `<path class="g-${k}" d="${d}"/>` : ''; }).join('')).join('');
+  const cols = g.meses.map((x, i) => `<rect class="g-col${x.m === sel ? ' sel' : ''}" data-accion="mes" data-mes="${x.m}" x="${n1(L + i * gw)}" y="${T - 4}" width="${n1(gw)}" height="${ph + 22}"><title>${MESES[i]}: te queda ${eur(x.neto)} · gastos ${eur(x.gastos)} · impuestos y cuota ${eur(x.impuestos)}</title></rect>`).join('');
+  const etiquetas = g.meses.map((x, i) => `<text class="g-mes${x.m === sel ? ' sel' : ''}" x="${n1(L + i * gw + gw / 2)}" y="${H - 6}" text-anchor="middle">${MESES[i][0].toUpperCase()}</text>`).join('');
+  return `<svg class="grafico" viewBox="0 0 ${W} ${H}" role="img" aria-label="Neto, gastos e impuestos de cada mes de ${g.anio}. Los mismos datos están en la tabla de abajo.">${rejilla}${barras}${etiquetas}${cols}</svg>
+    <div class="leyenda mini g-ley">${SERIES.map(([k, t]) => `<span class="g-l-${k}">${t}</span>`).join('')}</div>`;
+}
+
+/** Apartado «Gráficos»: qué parte de lo cobrado te queda, y neto, gastos e impuestos mes a mes. Tocar un mes enseña de dónde sale. */
+function impGraficos(a) {
+  const g = F.mesesDelAnio(S.estado, a.anio), T = g.total, sim = a.modo === 'simulacion';
+  if (!T.n && !T.nGastos && !T.cuota) return '<p class="nada">No hay nada que dibujar en este año.</p>';
+  const conDatos = g.meses.filter((x) => x.n || x.nGastos);
+  const sel = S.mes || (a.anio === M.hoyISO().slice(0, 4) ? Number(M.hoyISO().slice(5, 7)) : conDatos.length ? conDatos[conDatos.length - 1].m : 1), x = g.meses[sel - 1];
+  const p100 = (v) => (T.total > 0 ? `${Math.round(v / T.total * 100)} %` : '—');
+  const queda = T.pctQueda == null ? 0 : Math.max(0, Math.min(100, T.pctQueda)), n2 = (v) => v.toFixed(2);
+  const reparto = T.total > 0 ? `<section class="tarjeta" data-et="reparto">
+      <div class="et">De cada 100 € que ${sim ? 'habrías cobrado' : 'cobras'} con IVA · ${a.anio}</div>
+      <div class="medio"><span class="num">${eur(redondo(T.pctQueda))}</span> <span class="mini">te quedan</span></div>
+      <svg class="reparto" viewBox="0 0 100 4" preserveAspectRatio="none" role="img" aria-label="Te queda el ${Math.round(T.pctQueda)} % de lo cobrado">
+        <rect class="g-neto" x="0" y="0" height="4" width="${n2(Math.max(0, queda - 0.3))}"/><rect class="g-impuestos" x="${n2(queda + 0.3)}" y="0" height="4" width="${n2(Math.max(0, 100 - queda - 0.3))}"/></svg>
+      <div class="leyenda mini g-ley"><span class="g-l-neto">Te queda ${p100(T.neto)}</span><span class="g-l-impuestos">Hacienda y Seguridad Social ${p100(T.impuestos)}</span></div>
+      ${kv('Cobrado con IVA', T.total)}${a.general ? kv(`IVA, para Hacienda · ${p100(T.iva)}`, T.iva) : ''}${kv(`IRPF, para Hacienda · ${p100(T.irpf)}`, T.irpf)}${kv(`Cuota de autónomos · ${p100(T.cuota)}`, T.cuota)}${kv('Te queda (neto)', T.neto, 'fuerte')}
+      <p class="pie">Tus gastos no se restan aquí${T.gastos ? `: has pagado ${eur(T.gastos)}${a.ivaDeducible ? ` y recuperas ${eur(a.ivaDeducible)} de su IVA` : ''}` : ''}. El IRPF es la retención de cada factura o, si no lleva, lo que apartas para el pago trimestral.</p></section>` : '';
+  const delMes = facturas().filter((f) => f.estado !== 'abierta' && M.anioDe(f) === a.anio && Number(M.fechaDeFactura(f).slice(5, 7)) === sel && (sim || M.esAutonomo(f, S.estado.ajustes))).sort(ordenFecha);
+  const tabla = `<details class="cas g-det"><summary><span class="cas-t">Ver los 12 meses en tabla</span></summary>
+      <table class="control"><thead><tr><th>Mes</th><th>Te queda</th><th>Gastos</th><th>Impuestos</th></tr></thead><tbody>
+      ${g.meses.map((m, i) => `<tr><th><button class="enlace" data-accion="mes" data-mes="${m.m}">${MESES[i]}</button></th><td class="num">${eur(m.neto)}</td><td class="num">${eur(m.gastos)}</td><td class="num">${eur(m.impuestos)}</td></tr>`).join('')}
+      <tr><th>Año</th><td class="num">${eur(T.neto)}</td><td class="num">${eur(T.gastos)}</td><td class="num">${eur(T.impuestos)}</td></tr></tbody></table></details>`;
+  return `${reparto}
+    <h2 class="tit">Mes a mes</h2>
+    <section class="tarjeta">${graficoMeses(g, sel)}
+      <p class="pie">Cada factura cuenta en el mes de su fecha de factura. Toca un mes para ver de dónde sale.</p>${tabla}</section>
+    <section class="tarjeta sep" data-et="mes">
+      <div class="et">${MESES[sel - 1]} ${a.anio}</div>
+      <div class="medio"><span class="num">${eur(x.neto)}</span> <span class="mini">te queda</span></div>
+      ${kv(`Facturado sin IVA · ${plural(x.n, 'factura')}`, x.base)}${a.general ? kv('IVA cobrado', x.iva) : ''}${kv('IRPF', x.irpf)}${kv('Cuota de autónomos', x.cuota)}${kv('Impuestos y cuota, en total', x.impuestos)}${kv(`Gastos pagados · ${plural(x.nGastos, 'gasto')}`, x.gastos)}
+    </section>
+    ${delMes.length ? `<h2 class="tit">Facturas de ${MESES[sel - 1]}</h2><div class="lista">${delMes.map((f) => filaFactura(f)).join('')}</div>` : ''}`;
+}
+
 /** Tarjeta «Tarifa plana»: cuándo acaba y si el beneficio del año queda por debajo del salario mínimo (requisito de la prórroga). */
 function tarjetaTarifa(a) {
   const fi = fiscal(), sim = a.modo === 'simulacion';
   const linea = (r) => `${kv(`Beneficio para la Seguridad Social · ${r.anio}${r.cerrado || sim ? '' : ' · llevas'}`, r.llevas)}
-      ${r.cerrado || r.llevas === r.proyeccion ? '' : kv('A este ritmo acabarías el año en', r.proyeccion)}`;
-  const veredicto = (r, texto) => `<p class="veredicto ${r.cumple ? 'ok' : 'amb'}">${r.cumple ? '✓' : '⚠'} ${texto}</p>`;
+      ${r.cerrado || r.llevas === r.proyeccion ? '' : kv('A este ritmo acabarías el año en', r.proyeccion)}
+      ${r.ayudas ? kv(`De ello, ayudas`, r.ayudas) + kv('Sin las ayudas acabarías en', r.sinAyudas.proyeccion) : ''}`;
+  const veredicto = (r, texto) => `<p class="veredicto ${r.cumple ? 'ok' : 'amb'}">${r.cumple ? '✓' : '⚠'} ${texto}${r.soloPorAyudas ? ' Pasas solo por las ayudas: sin ellas quedarías por debajo. Confirma si cuentan para la Seguridad Social.' : ''}</p>`;
   const de = '<button class="enlace" data-accion="detalle-ss" data-anio="ANIO">Ver de dónde sale</button>';
   if (sim) {
     const r = F.ritmoSS(S.estado, a.anio);
@@ -469,7 +533,7 @@ function impResumen(a) {
     <p class="pie">El IVA no es tuyo: lo cobras y lo ingresas. La reserva para la renta sale de tu neto; es una estimación tuya y se cambia en Ajustes de autónomo.</p>
     <h2 class="tit">${a.anio} en números</h2>
     <section class="tarjeta">
-      ${kv('Facturado sin IVA', a.base)}
+      ${kv('Facturado sin IVA', a.base)}${a.ayudas ? kv('Ayudas y subvenciones', a.ayudas) : ''}
       ${a.general ? kv('IVA cobrado a clientes', a.iva) + kv('IVA deducible de gastos', -a.ivaDeducible) + kv('IVA a ingresar en el año', a.total303, 'fuerte') + (a.aDevolver303 ? kv('IVA a tu favor al cerrar el año', a.aDevolver303) : '') : kv('IVA', 'Franquicia: sin IVA')}
       ${kv('Retenciones en tus facturas', a.retencion)}
       ${kv('Pagos del modelo 130', a.obligado130 ? a.total130 : 'No toca')}
@@ -479,7 +543,7 @@ function impResumen(a) {
       ${a.dificil ? kv(`Gastos de difícil justificación (${numEntrada(fi.difJustPct)} %)`, a.dificil) : ''}
       ${kv('Beneficio para Hacienda', a.rendimiento, 'fuerte')}
     </section>
-    <p class="pie">Beneficio = facturado − gastos deducibles − cuota − amortización − gastos de difícil justificación. Cuentan las facturas emitidas (pendientes o cobradas) por su fecha de factura. <button class="enlace" data-accion="sub" data-sub="fiscal">Ajustes de autónomo</button></p>`;
+    <p class="pie">Beneficio = facturado${a.ayudas ? ' + ayudas' : ''} − gastos deducibles − cuota − amortización − gastos de difícil justificación. Cuentan las facturas emitidas (pendientes o cobradas) por su fecha de factura. <button class="enlace" data-accion="sub" data-sub="fiscal">Ajustes de autónomo</button></p>`;
 }
 
 function impTrimestres(a) {
@@ -606,7 +670,27 @@ const SUBVISTAS = {
       <button class="btn sec ancho" data-accion="exportar-csv">Exportar facturas a CSV</button>
       <button class="btn sec ancho" data-accion="exportar-gastos-csv">Exportar gastos a CSV</button>
       <p class="pie">El CSV es para abrirlo en Excel y <b>no va cifrado</b>.</p>
+      <h2 class="tit">Libros registro de autónomo</h2>
+      <label class="linea">Año <select data-libro-anio aria-label="Año de los libros">${M.anios(S.estado).map((x) => `<option ${x === libroAnio() ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
+      <button class="btn sec ancho" data-accion="exportar-libro" data-libro="emitidas">Libro de facturas emitidas</button>
+      <button class="btn sec ancho" data-accion="exportar-libro" data-libro="recibidas">Libro de facturas recibidas</button>
+      <button class="btn sec ancho" data-accion="exportar-libro" data-libro="bienes">Libro de bienes de inversión</button>
+      <p class="pie">Un CSV por libro y año, solo con tu actividad de autónomo (desde la fecha de alta). Llevan los datos de los libros de IVA e IRPF, pero no son el formato electrónico oficial de la Agencia Tributaria. La columna del NIF va vacía para que la rellenes tú. Tampoco van cifrados.</p>
       <label class="linea">Avisarme si llevo sin copia <input inputmode="numeric" data-ajuste="avisoCopiaDias" value="${esc(S.estado.ajustes.avisoCopiaDias)}" aria-label="Días"> días</label>` };
+  },
+
+  ayudas() {
+    const lista = M.vivos(S.estado.ayudas).sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
+    const filas = lista.map((y) => `<div class="fila" role="button" tabindex="0" data-accion="abrir-ayuda" data-id="${esc(y.id)}">
+        <div class="fila-a"><div class="fila-t">${esc(y.concepto || 'Ayuda')}</div><div class="fila-s">${fechaCorta(y.fecha)}</div>
+          <div class="fila-c">${y.cuentaSS === false ? 'No cuenta para la Seguridad Social' : 'Cuenta para la Seguridad Social'}</div></div>
+        <div class="fila-b"><div class="imp num">${eur(y.importe)}</div></div></div>`).join('');
+    return { titulo: 'Ayudas y subvenciones', cab: volver, html: `
+      <button class="btn sec ancho arriba" data-accion="abrir-ayuda" data-id="">＋ Añadir ayuda</button>
+      <div class="lista">${filas || '<p class="nada">No hay ayudas apuntadas.</p>'}</div>
+      <p class="pie">Una ayuda para tu actividad (como la de Garantía Juvenil) cuenta como ingreso de la actividad en el año de su fecha: sube el beneficio para Hacienda, la reserva de la hucha y, si te toca presentarlo, el modelo 130. No lleva IVA ni retención y no cambia tu neto.</p>
+      <p class="pie">Como no lleva retención, una ayuda grande puede dejar por debajo del ${numEntrada(fiscal().umbralRetenidoPct)} % la parte de tus ingresos con retención, y entonces toca presentar el modelo 130.</p>
+      <p class="pie">«Cuenta para la Seguridad Social» viene activado por prudencia: la ayuda suma al beneficio que se compara con el salario mínimo (prórroga de la tarifa plana) y con los tramos de cuota. No hay un criterio oficial publicado sobre la ayuda de Garantía Juvenil en concreto: pregunta a quien te la concede cómo y en qué año tributa.</p>` };
   },
 
   fiscal() {
@@ -935,6 +1019,30 @@ async function editarCategoria(id, error = '') {
 }
 
 /** Añadir o editar un tipo de material de la tabla de amortización (nombre y % al año). */
+/** Añadir, cambiar o borrar una ayuda puntual (Más → Ayudas y subvenciones). */
+async function editarAyuda(id, error = '', previo = null) {
+  const y = M.vivos(S.estado.ayudas).find((x) => x.id === id);
+  const v = previo || y || { fecha: M.hoyISO(), concepto: '', importe: null, cuentaSS: true };
+  const r = await dialogo({ titulo: y ? 'Ayuda' : 'Ayuda nueva', cuerpo: `
+      <label>Fecha (el año en que cuenta)<input type="date" name="fecha" value="${esc(v.fecha || '')}"></label>
+      <label>Concepto<input name="concepto" value="${esc(v.concepto || '')}" placeholder="Ayuda Garantía Juvenil"></label>
+      <label>Importe €<input name="importe" inputmode="decimal" value="${numEntrada(v.importe)}"></label>
+      <label>¿Cuenta para la Seguridad Social?<select name="cuentaSS"><option value="si" ${v.cuentaSS === false ? '' : 'selected'}>Sí (prudente)</option><option value="no" ${v.cuentaSS === false ? 'selected' : ''}>No</option></select></label>
+      ${error ? `<p class="error">${esc(error)}</p>` : ''}`,
+    botones: [{ texto: 'Cancelar', valor: false, clase: 'sec' }, ...(y ? [{ texto: 'Borrar', valor: 'borrar', clase: 'peligro' }] : []), { texto: 'Guardar', valor: true }] });
+  if (!r.valor) return;
+  if (r.valor === 'borrar') {
+    S.estado.ayudas[S.estado.ayudas.indexOf(y)] = M.tocar({ id: y.id, fecha: y.fecha, concepto: y.concepto, _borrado: true, _mod: y._mod, _base: y._base });
+  } else {
+    const datos = { fecha: r.datos.fecha, concepto: r.datos.concepto.trim(), importe: leerNumero(r.datos.importe), cuentaSS: r.datos.cuentaSS !== 'no' };
+    if (!datos.fecha) return editarAyuda(id, 'Pon la fecha.', datos);
+    if (!(datos.importe > 0)) return editarAyuda(id, 'Escribe el importe.', datos);
+    if (y) { const antes = JSON.stringify(y); Object.assign(y, datos); if (JSON.stringify(y) !== antes) M.tocar(y); }
+    else S.estado.ayudas.push({ ...datos, id: M.nuevoId('y'), _mod: Date.now(), _base: 0 });
+  }
+  await persistir(); render(); aviso(r.valor === 'borrar' ? 'Ayuda borrada' : 'Ayuda guardada');
+}
+
 async function editarAmortizacion(id, error = '') {
   const lista = fiscal().amortizaciones, x = lista.find((y) => y.id === id), v = x || { nombre: '', pct: null };
   const r = await dialogo({ titulo: x ? 'Tipo de material' : 'Tipo de material nuevo', cuerpo: `
@@ -1030,6 +1138,7 @@ function etiquetaItem(it) {
   const r = it.F && !it.F._borrado ? it.F : it.L || it.F;
   if (it.col === 'ajustes') return 'Ajustes de la app';
   if (it.col === 'clientes') return `Cliente: ${r.nombre || '(borrado)'}`;
+  if (it.col === 'ayudas') return `Ayuda: ${r.fecha || ''} · ${r.concepto || ''}${r.importe != null ? ' · ' + eur(r.importe) : ''}`;
   if (it.col === 'gastos') return `Gasto: ${r.fecha || ''} · ${r.proveedor || ''}${r.base != null ? ' · ' + eur(redondo((r.base || 0) + (r.iva || 0))) : ''}`;
   const nombres = new Map([...S.hoja.archivo.clientes, ...S.estado.clientes].map((c) => [c.id, c.nombre]));
   return `Factura #${r.n ?? '?'} · ${nombres.get(r.clienteId) || ''} · ${r.ref || ''}`;
@@ -1108,7 +1217,8 @@ async function mostrarInforme(inf) {
 const ACCIONES = {
   ir(el) { S.vista = el.dataset.vista; S.sub = null; render(); window.scrollTo(0, 0); },
   sub(el) { S.vista = 'mas'; S.sub = el.dataset.sub || null; render(); window.scrollTo(0, 0); },
-  anio(el) { S.anio = el.dataset.anio; render(); },
+  anio(el) { S.anio = el.dataset.anio; S.mes = 0; render(); },
+  mes(el) { S.mes = Number(el.dataset.mes); render(); },
   'ver-anio'(el) { S.anio = el.dataset.anio; S.f = { q: '', cliente: '', estado: '' }; S.vista = 'facturas'; S.sub = null; render(); window.scrollTo(0, 0); },
   'nueva-factura'() { hojaFactura(null); },
   'abrir-factura'(el) { hojaFactura(el.dataset.id); },
@@ -1154,7 +1264,7 @@ const ACCIONES = {
   'detalle-ss'(el) {
     const r = F.ritmoSS(S.estado, el.dataset.anio), fi = fiscal(), suma = redondo(r.rendimiento + r.cuota);
     dialogo({ titulo: `Beneficio para la Seguridad Social · ${r.anio}`, cuerpo: `<p>La Seguridad Social no mira el mismo beneficio que Hacienda: le vuelve a sumar la cuota que has pagado y le descuenta un ${numEntrada(fi.genericosSSPct)} % por gastos genéricos.</p>
-      ${kv('Beneficio para Hacienda', r.rendimiento)}${kv('Cuota de autónomos pagada', r.cuota)}${kv(`Descuento del ${numEntrada(fi.genericosSSPct)} %`, redondo(r.llevas - suma))}${kv('Beneficio para la Seguridad Social', r.llevas, 'fuerte')}
+      ${kv('Beneficio para Hacienda', r.rendimiento)}${r.ayudas ? kv('(dentro van ayudas por)', r.ayudas) : ''}${kv('Cuota de autónomos pagada', r.cuota)}${kv(`Descuento del ${numEntrada(fi.genericosSSPct)} %`, redondo(r.llevas - suma))}${kv('Beneficio para la Seguridad Social', r.llevas, 'fuerte')}
       ${r.cerrado || r.futuro || r.llevas === r.proyeccion ? '' : `${kv('A este ritmo, al acabar el año', r.proyeccion)}<p class="pie">«A este ritmo» reparte lo que llevas por los días que han pasado y lo alarga hasta el 31 de diciembre. Es una estimación.</p>`}
       ${kv('Salario mínimo al año', r.smi)}
       <p class="pie">El salario mínimo y el descuento se cambian en Ajustes de autónomo.</p>`, botones: [{ texto: 'Cerrar', valor: true }] });
@@ -1191,7 +1301,16 @@ const ACCIONES = {
   },
   'quitar-cuota'(el) { fiscal().cuotas.splice(Number(el.dataset.i), 1); guardarAjustes(true); },
   'abrir-categoria'(el) { editarCategoria(el.dataset.id || null); },
+  'abrir-ayuda'(el) { return editarAyuda(el.dataset.id || null); },
   'quitar-alta'() { cambiarFechaAlta(null); },
+  async 'exportar-libro'(el) {
+    const anio = libroAnio(), cual = el.dataset.libro;
+    const txt = cual === 'emitidas' ? libroEmitidas(S.estado, anio) : cual === 'recibidas' ? libroRecibidas(S.estado, anio) : libroBienes(S.estado, anio);
+    const n = txt.trim().split('\r\n').length - 1;
+    if (!n) return alerta('Libro vacío', S.estado.ajustes.fechaAlta ? `No hay nada que apuntar en ese libro en ${anio}.` : 'Los libros salen de tu actividad de autónomo: pon antes tu fecha de alta en Ajustes de autónomo.');
+    if (!await confirmar('Exportar libro', `${plural(n, 'fila')} de ${anio}. El CSV no va cifrado: cualquiera que tenga el archivo puede leerlo.`, 'Exportar')) return;
+    await entregarArchivo(`libro-${cual}-${anio}.csv`, txt, 'text/csv');
+  },
   async 'exportar-gastos-csv'() {
     if (!await confirmar('Exportar gastos a CSV', 'El CSV no va cifrado: cualquiera que tenga el archivo puede leerlo.', 'Exportar')) return;
     await entregarArchivo(`gastos-${M.hoyISO()}.csv`, gastosCSV(S.estado), 'text/csv');
@@ -1303,6 +1422,7 @@ document.addEventListener('change', (e) => {
   if (el.id === 'archivo' && el.files[0]) importarArchivo(el.files[0]).catch(fallo);
   else if (el.dataset.eleccion) S.hoja.elecciones[el.dataset.eleccion] = el.checked ? 'archivo' : 'local';
   else if (el.dataset.eleccionRadio) S.hoja.elecciones[el.dataset.eleccionRadio] = el.value;
+  else if ('libroAnio' in el.dataset) S.libroAnio = el.value;
   else if (el.dataset.ajuste) {
     const n = Math.round(leerNumero(el.value) || 0);
     if (n > 0) { S.estado.ajustes[el.dataset.ajuste] = n; M.tocar(S.estado.ajustes); persistir().then(() => aviso('Guardado')).catch(fallo); }
