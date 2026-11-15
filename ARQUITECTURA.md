@@ -178,6 +178,10 @@ Fase 3, parte B (15 de noviembre de 2026; plan completo en la sección 14 del do
   sin librerías ni estilos en línea; los tres tonos (`.g-neto`, `.g-gastos`, `.g-impuestos` en `app.css`) están
   comprobados sobre el fondo oscuro para daltonismo y contraste: no los cambies sin volver a comprobarlos. Tocar un mes
   (o su fila en la tabla) elige `S.mes` y enseña su detalle y sus facturas, editables desde ahí.
+- Actualización (1.3.1): `sw.js` pide los archivos con `cache: 'reload'` al instalarse; antes podía guardar archivos
+  viejos de la caché del navegador y dejar una mezcla de versiones. Si llega una versión nueva con la app abierta, se
+  recarga sola en la pantalla del código o avisa si ya está desbloqueada. `index.html`, el manifest y los iconos no
+  cambian de una versión a otra: es normal que en GitHub conserven su fecha antigua.
 - `leerNumero()` (1.2.3): «1.000» escrito sin coma se lee como mil (antes, como uno). «1.5» sigue siendo 1,5.
 
 ## Lo que falta
@@ -186,7 +190,7 @@ Fase 3, parte B (15 de noviembre de 2026; plan completo en la sección 14 del do
 explicación, resumen para la renta, material que se amortiza, gastos de difícil justificación, minoración del 130 y
 reducción por inicio de actividad.
 
-**Fase 3, parte B: hecha** (versión 1.3.0): tarifa plana (1.2.1), cuota según el beneficio (1.2.2), ayuda puntual
+**Fase 3, parte B: hecha** (versión 1.3.1): tarifa plana (1.2.1), cuota según el beneficio (1.2.2), ayuda puntual
 (1.2.3), libros registro (1.2.4) y gráficos (1.3.0). El comparador cooperativa / autónomo NO se hace (decisión del usuario).
 
 Pendiente, de baja prioridad: aprovechar el ancho de la pantalla en el PC sin quitar las pestañas de abajo; confirmar

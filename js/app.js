@@ -17,7 +17,7 @@ import * as F from './fiscal.js';
 import * as MO from './modelos.js';
 import { aCSV, gastosCSV, libroEmitidas, libroRecibidas, libroBienes } from './csv.js';
 
-const VERSION = '1.3.0'; // cambiar también en sw.js
+const VERSION = '1.3.1'; // cambiar también en sw.js
 const MIN_CLAVE = 4; // decisión del usuario: código corto tipo PIN (él sabe que una copia así se puede forzar)
 
 const S = {
@@ -1458,7 +1458,15 @@ document.addEventListener('change', (e) => {
 
 // ---------- arranque ----------
 async function arrancar() {
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
+  if ('serviceWorker' in navigator) {
+    const habia = !!navigator.serviceWorker.controller;   // ya había una versión guardada: si cambia, es una actualización
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!habia) return;
+      if (!S.estado) location.reload();                   // con la app cerrada con código se recarga sola, sin perder nada
+      else aviso('Hay una versión nueva: cierra la app y ábrela otra vez');
+    });
+    navigator.serviceWorker.register('./sw.js').catch(() => {});
+  }
   try { if (await B.existe()) pantallaDesbloqueo(); else pantallaCrear(); }
   catch (e) { $('#app').innerHTML = `<div class="puerta"><h1>No se puede abrir</h1><p>Este navegador no deja guardar datos (¿modo privado?).</p><p class="error">${esc(e && e.message)}</p></div>`; }
 }

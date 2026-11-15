@@ -214,7 +214,7 @@ input[readonly] { color: var(--suave); background: var(--panel); }
 .g-tick, .g-mes { font-size: 9px; fill: var(--suave); } .g-tick { font-family: var(--mono); }
 .g-mes.sel { fill: var(--texto); font-weight: 700; }
 .g-neto { fill: #14a08a; } .g-gastos { fill: #6f86e8; } .g-impuestos { fill: #b9831f; }
-.g-col { fill: transparent; cursor: pointer; } .g-col.sel { fill: rgba(232, 243, 244, .08); }
+.g-col { fill: transparent; cursor: pointer; pointer-events: all; } .g-col.sel { fill: rgba(232, 243, 244, .08); }
 .g-ley span { color: var(--suave); } .g-ley span::before { background: var(--c); }
 .g-l-neto { --c: #14a08a; } .g-l-gastos { --c: #6f86e8; } .g-l-impuestos { --c: #b9831f; }
 .g-det { margin-top: 8px; } .g-det .control { margin-top: 6px; } .g-det .enlace { font-size: inherit; text-transform: capitalize; }

@@ -2,7 +2,7 @@
 // IMPORTANTE: cada vez que cambies cualquier archivo de la app, sube VERSION (aquí y en js/app.js).
 // Si no, los dispositivos seguirán usando la versión guardada.
 
-const VERSION = '1.3.0';
+const VERSION = '1.3.1';
 const CACHE = 'msf-' + VERSION;
 const ARCHIVOS = [
   './', './index.html', './manifest.webmanifest', './css/app.css',
@@ -11,7 +11,9 @@ const ARCHIVOS = [
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ARCHIVOS)).then(() => self.skipWaiting()));
+  // cache: 'reload' = pedir siempre los archivos al servidor. Sin esto, al actualizar se podían guardar archivos viejos
+  // que el navegador aún tenía en su caché (GitHub Pages los deja 10 minutos) y quedaba una mezcla de versiones.
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ARCHIVOS.map((u) => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {
