@@ -1,0 +1,180 @@
+# Arquitectura — cómo está hecha la app y cómo seguirla
+
+Documento para quien continúe el proyecto (persona u otro modelo). Léelo entero antes de tocar nada.
+
+## Reglas que no se rompen
+
+1. **Sin servidor y sin librerías externas.** Solo HTML, CSS y JavaScript del navegador (módulos ES).
+2. **Ningún dato del usuario en el repositorio**: ni clientes, ni importes, ni copias. El repositorio es público.
+3. **Sin estilos ni scripts en línea.** La política de seguridad (CSP) de `index.html` los bloquea. Todo el CSS va en
+   `css/app.css`; para ocultar algo se usa el atributo `hidden`.
+4. **El neto siempre por delante del bruto.** La cifra grande de cada pantalla es neto cobrado (solo facturas
+   cobradas). Lo pendiente va aparte: neto previsto si está apuntado; si no, «neto por confirmar» con su bruto.
+   Una factura sin neto nunca se suma al neto.
+5. **Navegación por pestañas abajo**, sin menú lateral ni en el ordenador. Crear factura siempre a un toque (botón
+   flotante). Cualquier factura se edita desde donde aparezca: todas las listas usan `filaFactura()`.
+6. Ningún porcentaje, cuota o límite fiscal fijo en los cálculos: todos salen de `ajustes.fiscal`, editables en
+   *Más → Ajustes de autónomo*. Los valores de partida están en `fiscalPorDefecto()` (`modelo.js`) y nacen como
+   «pendiente de confirmar», con enlace a la página oficial (`ENLACES` en `app.js`).
+7. Al cambiar cualquier archivo, subir `VERSION` en `sw.js` y `js/app.js`, y añadir los archivos nuevos a la lista
+   `ARCHIVOS` de `sw.js`.
+8. Antes de entregar: `node pruebas/logica.mjs` y las dos pruebas de navegador (abajo) tienen que pasar.
+9. Una regla fiscal no se cambia sin el visto bueno del usuario. Están resumidas en la cabecera de `js/fiscal.js`
+   y cada una tiene su prueba con un ejemplo calculado a mano en `pruebas/logica.mjs`.
+
+## Archivos
+
+| Archivo | Qué hace |
+| --- | --- |
+| `index.html` | Cáscara y política de seguridad. |
+| `css/app.css` | Todo el estilo (tema oscuro, acento turquesa). |
+| `js/cripto.js` | PBKDF2-SHA256 (600.000 iteraciones) → AES-GCM 256. |
+| `js/almacen.js` | Clave/valor sobre IndexedDB. |
+| `js/boveda.js` | Estado completo cifrado en un bloque; copias automáticas; cambio de contraseña. |
+| `js/modelo.js` | Forma de los datos, ajustes de partida, régimen de cada factura y cálculos de facturas (funciones puras). |
+| `js/fiscal.js` | Cálculos de autónomo: gastos, trimestres (303 y 130), cuota, hucha, calendario, 347, simulación (funciones puras). |
+| `js/migracion.js` | Importa la copia de la app antigua (`app: "mis-facturas"`, versión 2) con informe de control. |
+| `js/copias.js` | Archivo de copia cifrado y fusión entre dispositivos. |
+| `js/modelos.js` | Las cifras para presentar: casillas de los modelos 303, 130 y 390 y resumen para la renta. Solo ordena y explica lo que calcula `fiscal.js`. |
+| `js/csv.js` | Exportación a CSV de facturas y de gastos. |
+| `js/app.js` | Interfaz: vistas, fichas, diálogos, eventos delegados por `data-accion`. |
+| `sw.js`, `manifest.webmanifest`, `iconos/` | Instalación y funcionamiento sin internet. |
+| `pruebas/` | `logica.mjs` (Node, sin dependencias), `e2e.mjs` (fase 1) y `e2e-autonomo.mjs` (fase 2): Playwright + Chrome, dos dispositivos. |
+
+## Datos
+
+Está descrito en la cabecera de `js/modelo.js`. Resumen:
+
+- `estado = { esquema, ajustes, clientes[], facturas[], gastos[] }`. Se cifra entero y se guarda en IndexedDB
+  (clave `boveda`). Esquema actual: 3. El 1 no tenía `ajustes.fiscal` ni `gastos`; el 2 no tenía amortización,
+  gastos de difícil justificación ni minoración. `completar()` añade lo que falte con los valores de partida. Una app
+  con un esquema menor rechaza importar una copia con uno mayor («actualiza la app»).
+- Factura: `id, n, ref, clienteId, estado ('abierta'|'pendiente'|'cobrada'), fechaFactura, fechaCobro, neto, diasSS,
+  nota, servicios[{evento, mod, fecha, dias, importe}]`. `antiguo` guarda campos de la app vieja que no se usan
+  (`total`, `ajuste`). `fechaEstimada: true` = la fecha de factura la puso la migración (último servicio).
+- Bruto = suma de importes de los servicios (nunca se guarda). El neto lo apunta el usuario al cobrar.
+- Año de una factura = el de `fechaFactura` (o del último servicio si falta). No el de cobro.
+- Cliente: `plazo` = `null`, `{tipo:'dias', dias}` o `{tipo:'mes', desde, hasta}` (días del mes siguiente a la factura).
+- **Régimen de una factura** (`esAutonomo()`): autónomo si hay `ajustes.fechaAlta` y su fecha de factura es igual o
+  posterior; si no, cooperativa. No se guarda: se deduce siempre de las fechas, así que cambiar la fecha de alta
+  cambia de régimen las facturas afectadas sin tocar sus datos.
+- Factura de autónomo: el importe de cada servicio es la base sin IVA. Guarda `ivaPct` y `retPct` (los porcentajes
+  con los que se hizo; si faltan se usan los de ajustes). `desglose()` da IVA, retención, total a cobrar y neto.
+  Su `neto` guardado no se usa y no lleva días cotizados. `netoDe()` y `totales(facturas, ajustes)` ya lo distinguen.
+- Gasto: `id, fecha, proveedor, numFactura, categoria, base, ivaPct, iva, dedIva, dedIrpf, justificante, nota`.
+  Si es material que se amortiza lleva además `amortiza: true` y `amortPct` (% al año): no cuenta como gasto de golpe,
+  sino `valor × % × días en uso / días del año` cada año hasta agotar el valor (`amortizadoEnAnio()`). Su IVA se
+  deduce entero en el trimestre de la compra.
+- `ajustes.fiscal`: epígrafe, régimen de IVA, porcentajes, tramos de cuota (`cuotas[{desde:'AAAA-MM', importe}]`),
+  categorías de gasto, `confirmados{}` (valores que el usuario ya ha comprobado) y `presentados{}` (modelos
+  presentados, con id `AAAA-303-1`, `AAAA-130-1`, `AAAA-390`, `AAAA-347`, `AAAA-renta`).
+- Todo registro lleva `_mod` y `_base`; los borrados quedan como `{ id, _borrado: true }`. Los ajustes son un único
+  registro: al cambiarlos se llama a `guardarAjustes()` (`app.js`), que hace `M.tocar(ajustes)`.
+- Datos solo de este dispositivo (fecha de la última copia) van sin cifrar en la clave `local` y no viajan.
+
+### Añadir algo nuevo a los datos (por ejemplo, gastos)
+
+1. Añádelo a `estadoVacio()`; `completar()` lo rellena en estados antiguos. Si cambia la forma de algo existente,
+   sube `ESQUEMA` y añade la conversión en `completar()`.
+2. Si es una lista de registros, añádela a `COLECCIONES` en `copias.js` para que entre en la fusión, y dale
+   etiqueta y diferencias en `etiquetaItem()` (`app.js`) y `diferencias()` (`copias.js`).
+3. Cada cambio de un registro llama a `M.tocar(registro)` y luego a `persistir()`.
+
+## Fusión entre dispositivos (`copias.js`)
+
+No hay servidor: el usuario exporta un archivo cifrado en un dispositivo y lo importa en el otro.
+`_mod` = última modificación; `_base` = el `_mod` de la última versión compartida. Con L (aquí) y F (archivo):
+
+- `L._mod === F._mod` → igual.
+- `F._base === L._mod` → el archivo parte de mi versión: gana el archivo.
+- `L._base === F._mod` → yo parto de la versión del archivo: gana lo mío.
+- Un lado sin tocar desde que se compartió (`_mod === _base`) → gana el más reciente, sin conflicto. (Añadido en la
+  1.1.0: sin esto, un registro creado en la app, importado en el otro dispositivo y editado después solo en el
+  primero aparecía como conflicto.)
+- Otro caso → conflicto: decide el usuario. Al quedarse con lo suyo, su registro pasa a ser «posterior al del archivo»
+  para que la elección viaje al otro dispositivo en la siguiente copia.
+
+Antes de aplicar se guarda una copia automática cifrada (`inst:<fecha>`, se conservan 5) para poder deshacer.
+
+## Decisiones tomadas con el usuario
+
+- Bloqueo con código, siempre al abrir. Mínimo 4 dígitos por decisión del usuario, que sabe que una copia con
+  código corto se puede forzar; el teclado numérico es el de por defecto y se puede pasar a letras. Sin Face ID.
+  Sin recuperación. Sin bloqueo automático en segundo plano.
+- Justificantes de gastos: sin fotos; solo el apunte y una casilla «justificante guardado».
+- Días cotizados: solo mientras factura por cooperativa. Filtro por año: siempre.
+- Copia de la app antigua: se deja el hueco de numeración; fecha de factura ausente = último servicio; un neto mayor
+  que el importe se descarta y se avisa; los plazos se enganchan por nombre parecido y el que no encaja se pregunta.
+- Comparación con el año anterior: sobre lo facturado (bruto) de facturas cobradas o pendientes de cobro (las sin
+  cerrar no cuentan), en pequeño, porque lo pendiente no tiene neto.
+- Plazo `mes` (un cliente lo usa): se cobra entre dos días del mes siguiente a la fecha de factura.
+- Avisos de plazos: al abrir la app (banda en Inicio) más un archivo de calendario `.ics` sin importes; sin servidor
+  no hay notificaciones.
+
+Fase 2 (12 de noviembre de 2026):
+
+- Neto de autónomo = base − IRPF (la retención de la factura o, si no lleva, el % del pago trimestral como
+  estimación). La cuota se resta del total del año en Inicio, Resumen e Impuestos, no de cada factura.
+- Modelo 130: % del beneficio acumulado − retenciones − pagos anteriores. No se presenta (profesional o artística)
+  si el 70 % de los ingresos del año anterior llevó retención; sin año anterior, cuenta el propio periodo.
+- La cuota de autónomos cuenta sola como gasto del IRPF; no se apunta como gasto.
+- Gasto para el IRPF = (base + IVA no deducible) × % deducible. Categoría «Gasolina y vehículo»: IVA 50 %, IRPF 0 %
+  (elegido por el usuario: criterio prudente con vehículo de uso mixto).
+- Epígrafe de partida: profesional con retención del 7 %. El usuario aún no lo ha decidido.
+- Cuentan las facturas emitidas (pendientes o cobradas) por fecha de factura; las sin cerrar no.
+- Hucha: IVA y 130 de trimestres empezados y no presentados + reserva para la renta (un % del beneficio que decide
+  el usuario, menos retenciones y pagos del 130). Marcar un modelo como presentado lo saca de la hucha y de los avisos.
+- Al cobrar una factura de autónomo no se pide el neto: se enseña el total que tiene que haber entrado.
+- Los años anteriores al del alta (o todos, sin fecha) se ven en simulación; no cambia ningún dato real.
+
+Fase 3, parte A (13 de noviembre de 2026):
+
+- Para la renta la app da las cifras para copiar en Renta Web, por conceptos y sin números de casilla (cambian cada
+  año). No estima el impuesto: eso lo hace Renta Web. La reserva de la hucha sigue siendo el % del usuario.
+- Gastos de difícil justificación: % del beneficio antes de ellos, con tope anual. Van dentro de los gastos (casilla
+  02 del 130) y bajan el beneficio. Con el % a 0 no se aplican.
+- Modelo 130 casilla a casilla (`t.c130`): la 05 suma las casillas 07 positivas anteriores (no lo pagado); la 13 es la
+  minoración según el beneficio del año anterior (sin año anterior cuenta como 0); la 15 descuenta los resultados
+  negativos de trimestres anteriores. Lo que se paga es la casilla 19 si es positiva.
+- Modelo 303: IVA devengado por tipo; gastos en «corrientes» (28-29) o «bienes de inversión» (30-31) si se amortizan
+  y su base llega al importe de `umbralInversionIva`. El saldo a favor se arrastra dentro del año (110/78/87); se
+  supone que en el 4T se pide la devolución, así que el año siguiente empieza sin arrastre.
+- Los números de casilla están solo en `js/modelos.js`. En pantalla se avisa de que manda el nombre, no el número.
+- La reducción por inicio de actividad está desactivada de partida y solo sale en el resumen de la renta.
+
+## Lo que falta
+
+**Fases 1 y 2 y fase 3 parte A: hechas** (versión 1.2.0). La parte A: casillas de los modelos 303, 130 y 390 con
+explicación, resumen para la renta, material que se amortiza, gastos de difícil justificación, minoración del 130 y
+reducción por inicio de actividad.
+
+**Fase 3, parte B (pendiente):** comparador cooperativa / autónomo; gráficos mes a mes; tarifa plana (cuándo acaba y
+si cumple el requisito del salario mínimo para el segundo año) y cuota según ingresos después; ayuda puntual como
+ingreso; libros registro (pueden salir de `aCSV()` y `gastosCSV()`).
+
+Limitaciones conocidas: no hay prorrata de IVA, recargo de equivalencia ni operaciones con el extranjero; el material
+comprado antes del alta no se amortiza; la cuota del mes del alta cuenta entera.
+
+Pendiente de la fase 1: probar en un iPhone real y decidir si las copias llevan una contraseña larga aparte.
+
+## Pruebas
+
+```
+node pruebas/logica.mjs                         # lógica, con datos inventados
+node pruebas/logica.mjs ruta/a/copia-antigua.json   # además comprueba las cifras de una copia real
+
+python3 -m http.server 8765                     # en la carpeta de la app
+PLAYWRIGHT=/ruta/playwright/index.mjs CHROME=/usr/bin/google-chrome \
+  node pruebas/e2e.mjs http://127.0.0.1:8765/ ruta/a/copia-antigua.json /tmp/salida
+PLAYWRIGHT=/ruta/playwright/index.mjs CHROME=/usr/bin/google-chrome \
+  node pruebas/e2e-autonomo.mjs http://127.0.0.1:8765/ ruta/a/copia-antigua.json /tmp/salida2
+```
+
+`e2e-autonomo.mjs` no lleva cifras escritas: las calcula con `modelo.js` y `fiscal.js` y las compara con la pantalla.
+Recorre simulación, gasto, fecha de alta, impuestos reales, hucha, presentar, calendario, factura de autónomo, cobro,
+las casillas de los modelos una a una, material que se amortiza, copia entre dos dispositivos y vuelta a cooperativa. Las carpetas de salida contienen copias con datos: bórralas.
+
+La prueba de navegador simula un móvil y un PC: crea contraseñas, importa, crea/edita/cobra/borra, exporta e importa
+copias en los dos sentidos con un conflicto, deshace, cambia la contraseña y abre sin internet. No se ha probado en un
+iPhone real: lo primero que hay que revisar ahí es el selector de fecha, el de mes (tramos de cuota), *Compartir* al
+exportar (copia, CSV y calendario) y la lista de modalidades.
