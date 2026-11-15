@@ -73,6 +73,7 @@ export function fiscalPorDefecto() {
     avisoTarifaDias: 60,          // avisar de que acaba la tarifa plana con estos días de antelación
     tipoCotizacionPct: 31.5,      // cuota sin tarifa plana = base de cotización × este % (el de 2026)
     limiteCuota: 300,             // decisión mía: cuota al mes que no quiero pasar
+    diaCargoCuota: 31,            // día del mes en que cargan la cuota en el banco (31 = el último día del mes)
     tramosCuota: [                // cuota según el beneficio: beneficio al mes «hasta» (null = sin límite) y base mínima (tabla de 2026)
       { hasta: 670, base: 653.59 }, { hasta: 900, base: 718.95 }, { hasta: 1166.7, base: 849.67 }, { hasta: 1300, base: 950.98 },
       { hasta: 1500, base: 960.78 }, { hasta: 1700, base: 960.78 }, { hasta: 1850, base: 1143.79 }, { hasta: 2030, base: 1209.15 },

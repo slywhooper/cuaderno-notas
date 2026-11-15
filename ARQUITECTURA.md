@@ -195,6 +195,16 @@ Fase 3, parte B (15 de noviembre de 2026; plan completo en la sección 14 del do
   datos hay que añadirla a `LECTURA_OK`; una que cambie algo, NUNCA. Un campo nuevo en los datos hay que añadirlo a
   `reducir()` y `ampliar()`. El usuario sabe que quien tenga enlace y código lo ve todo y que un enlace enviado no se
   puede anular. No se puede acortar más sin un servidor (unos 4.500 caracteres con todo; 2.500 con un solo año).
+- Gráficos de Inicio (1.6.0, `quedaPorMes()` y `flujoSemanal()` en `fiscal.js`; `tarjetaQueda()` y `tarjetaSemanas()` en
+  `app.js`). «Lo que te queda cada mes»: neto de las facturas cobradas ese mes (por fecha de cobro; si falta, la de
+  factura) menos la cuota del mes; sin IVA, con el IRPF ya apartado y SIN restar gastos; no se compara con el año
+  anterior (decisión del usuario: cooperativa y autónomo no son comparables). «Próximas 12 semanas»: entra lo pendiente
+  de cobro en su fecha prevista (cooperativa: neto apuntado; autónomo: total que entra en el banco); sale la cuota el
+  día `diaCargoCuota` y los modelos 303 y 130 y la reserva de la renta en su último día; lo atrasado va en la semana
+  de hoy; el acumulado empieza en cero. Lo que no tiene neto o fecha no se dibuja y se avisa debajo. Al tocar un mes o
+  una semana sale su detalle. PENSADO PARA CRECER: cuando exista la sección de gastos de la vivienda (agua, luz,
+  basuras, comunidad), sus recibos se añaden como salidas en `flujoSemanal()` (`tipo` nuevo) sin tocar el gráfico.
+  En el PC: columna izquierda = lo que viene (semanas), centro = próximos cobros, derecha = lo pasado (meses, últimas).
 - `leerNumero()` (1.2.3): «1.000» escrito sin coma se lee como mil (antes, como uno). «1.5» sigue siendo 1,5.
 
 ## Lo que falta
@@ -203,7 +213,7 @@ Fase 3, parte B (15 de noviembre de 2026; plan completo en la sección 14 del do
 explicación, resumen para la renta, material que se amortiza, gastos de difícil justificación, minoración del 130 y
 reducción por inicio de actividad.
 
-**Fase 3, parte B: hecha** (versión 1.5.0, con la vista de PC y el enlace de solo lectura): tarifa plana (1.2.1), cuota según el beneficio (1.2.2), ayuda puntual
+**Fase 3, parte B: hecha** (versión 1.6.0, con la vista de PC, el enlace de solo lectura y los gráficos de Inicio): tarifa plana (1.2.1), cuota según el beneficio (1.2.2), ayuda puntual
 (1.2.3), libros registro (1.2.4) y gráficos (1.3.0). El comparador cooperativa / autónomo NO se hace (decisión del usuario).
 
 Pendiente: probar la vista de PC en la pantalla real del usuario y ajustar lo que pida; confirmar

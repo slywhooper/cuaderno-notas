@@ -252,3 +252,11 @@ input[readonly] { color: var(--suave); background: var(--panel); }
 .lectura .inerte { cursor: default; }
 .lectura-b .enlace { color: #cfe2ff; text-decoration: underline; font-size: inherit; margin-left: 6px; }
 .enlace-txt { font-family: var(--mono); font-size: 12px; word-break: break-all; }
+
+/* Gráficos de Inicio (1.6.0) */
+.g-linea { fill: none; stroke: #c9d6d9; stroke-width: 1.6; stroke-linejoin: round; }
+.g-pt { fill: #c9d6d9; stroke: var(--panel); stroke-width: 1.5; }
+.g-l-linea { --c: #c9d6d9; }
+.g-cab { display: flex; gap: 18px; font-size: .88rem; color: var(--suave); margin-bottom: 2px; } .g-cab b { color: var(--texto); font-weight: 650; }
+.g-detalle { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--linea); }
+.g-detalle .lista { margin-top: 8px; grid-template-columns: 1fr; }

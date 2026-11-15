@@ -268,6 +268,26 @@ await impuestos(A);
 assert.equal(await texto(A, '.grande'), eur(a.neto)); assert.equal(await texto(A, '.medio.amb'), eur(h.total));
 paso('factura de autónomo: desglose en la ficha, cambia de régimen con la fecha, cobro sin pedir neto, y todo cuadra con la lógica');
 
+// Gráficos de Inicio: lo que queda cada mes y el dinero por semanas coinciden con la lógica
+const re2 = (t) => t.replace(/[.$?()]/g, '\\$&'), mesAhora = Number(hoy.slice(5, 7));
+let qm = F.quedaPorMes(esperado, anio), fl = F.flujoSemanal(esperado);
+await ir(A, 'inicio'); await A.click(`.chip[data-anio="${anio}"]`);
+assert.equal(await A.locator('[data-et=queda] .g-col').count(), 12);
+assert.equal(await A.locator('[data-et=queda-mes]').count(), 0);                          // sin tocar nada no hay detalle
+await A.locator(`[data-et=queda] .g-col[data-mes="${mesAhora}"]`).click();
+assert.match(await texto(A, '[data-et=queda-mes]'), new RegExp(`Cuota de autónomos ${re2(eur(-qm.meses[mesAhora - 1].cuota))}.*Te queda ${re2(eur(qm.meses[mesAhora - 1].queda))}`));
+assert.equal(await A.locator('[data-et=queda-mes] .fila').count(), qm.meses[mesAhora - 1].n);
+await A.locator(`[data-et=queda] .g-col[data-mes="${mesAhora}"]`).click();                // tocar otra vez lo cierra
+assert.equal(await A.locator('[data-et=queda-mes]').count(), 0);
+assert.match(await texto(A, '[data-et=semanas]'), new RegExp(`Entra ${re2(eur(fl.entra))} Sale ${re2(eur(fl.sale))}`));
+assert.equal(await A.locator('[data-et=semanas] .g-col').count(), 12);
+const conSalida = fl.semanas.find((x) => x.sale > 0);
+await A.locator(`[data-et=semanas] .g-col[data-i="${conSalida.i}"]`).click();
+assert.match(await texto(A, '[data-et=semana-det]'), new RegExp(`Sale ${re2(eur(-conSalida.sale))}.*Acumulado hasta esta semana ${re2(eur(conSalida.acumulado))}`));
+await foto(A, '21b-inicio-graficos', true);
+await A.locator(`[data-et=semanas] .g-col[data-i="${conSalida.i}"]`).click();
+paso(`gráficos de Inicio: en ${anio} te quedan ${eur(qm.total.queda)} de lo cobrado; en 12 semanas entran ${eur(fl.entra)} y salen ${eur(fl.sale)}`);
+
 // Fase 3: casillas de los modelos y material que se amortiza
 const q = F.trimestreDe(hoy), esc = (t) => t.replace(/[.$?()]/g, '\\$&');
 const casillas = async (p) => Object.fromEntries(await p.locator('.cas').evaluateAll((els) => els.map((el) => [el.querySelector('.cas-n')?.textContent || el.querySelector('.cas-t').textContent, el.querySelector('.cas-v').textContent.replace(/\u00a0/g, ' ')])));

@@ -18,7 +18,7 @@ import * as MO from './modelos.js';
 import { aCSV, gastosCSV, libroEmitidas, libroRecibidas, libroBienes } from './csv.js';
 import * as EN from './enlace.js';
 
-const VERSION = '1.5.0'; // cambiar también en sw.js
+const VERSION = '1.6.0'; // cambiar también en sw.js
 const MIN_CLAVE = 4; // decisión del usuario: código corto tipo PIN (él sabe que una copia así se puede forzar)
 
 const S = {
@@ -27,7 +27,8 @@ const S = {
   vista: 'inicio', sub: null,                 // pestaña y subpantalla de "Más"
   anio: String(new Date().getFullYear()),     // año elegido o 'todo'
   f: { q: '', cliente: '', estado: '' },      // filtros de la lista de facturas
-  imp: 'resumen', trim: 0, modelo: '303', mes: 0,     // apartado de Impuestos, trimestre elegido (0 = el actual) y modelo
+  imp: 'resumen', trim: 0, modelo: '303', mes: 0,
+  mesInicio: 0, semana: -1,                   // Inicio: mes y semana elegidos en sus gráficos (0 y -1 = ninguno)     // apartado de Impuestos, trimestre elegido (0 = el actual) y modelo
   hoja: null,                                 // ficha abierta: { tipo, datos, ... }
   lectura: null,                              // vista de solo lectura abierta desde un enlace: { fecha, anio } (ver enlace.js)
   instantaneas: [],
@@ -60,7 +61,7 @@ const nombreCliente = (id) => mapaClientes().get(id)?.nombre || 'Sin cliente';
 // SOLO LECTURA (enlace compartido, ver enlace.js). Tres barreras para que no se pueda cambiar ni guardar nada:
 //  1) persistir() no escribe; 2) solo se atienden las acciones de LECTURA_OK; 3) los cambios en campos se ignoran.
 // Además, aplicarLectura() esconde los botones que no valen y desactiva los campos. La bóveda del dispositivo ni se abre.
-const LECTURA_OK = new Set(['ir', 'sub', 'anio', 'mes', 'ver-anio', 'imp', 'ir-imp', 'trim', 'modelo', 'detalle-ss', 'detalle-cuota', 'detalle-hucha', 'detalle-comparativa', 'salir-lectura']);
+const LECTURA_OK = new Set(['ir', 'sub', 'anio', 'mes', 'ver-anio', 'imp', 'ir-imp', 'trim', 'modelo', 'detalle-ss', 'detalle-cuota', 'detalle-hucha', 'detalle-comparativa', 'salir-lectura', 'mes-inicio', 'semana']);
 const persistir = () => (S.lectura ? Promise.resolve() : B.guardarEstado(S.estado));
 const fiscal = () => S.estado.ajustes.fiscal;
 const gastos = () => M.vivos(S.estado.gastos);
@@ -117,6 +118,7 @@ const PROPIOS = [
   ['avisoPlazoDias', 'Avisarme de un plazo con esta antelación', 'días'],
   ['avisoTarifaDias', 'Avisarme de que acaba la tarifa plana con esta antelación', 'días'],
   ['limiteCuota', 'Cuota al mes que no quiero pasar (sin tarifa plana)', '€'],
+  ['diaCargoCuota', 'Día del mes en que me cargan la cuota (31 = el último día)', 'día'],
 ];
 
 function aviso(texto) {
@@ -317,6 +319,7 @@ const VISTAS = {
     const h = A.fechaAlta ? F.hucha(S.estado) : null;
     const lineaHucha = h && h.total > 0 ? `<button class="comp hucha" data-accion="ir-imp" data-imp="resumen">Hucha de impuestos: ten apartados ${eur(h.total)}</button>` : '';
     const ultimas = fs.filter((f) => f.estado === 'cobrada').sort(ordenFecha).slice(0, 5);
+    const anioG = S.anio === 'todo' ? M.hoyISO().slice(0, 4) : S.anio;
 
     let comp = '';
     if (S.anio !== 'todo') {
@@ -342,10 +345,12 @@ const VISTAS = {
         <div><div class="et">Neto por confirmar</div><div class="medio pc num">${tp.nSinNeto} fact.</div>
           <div class="mini num">bruto ${eur(tp.brutoSinNeto)}</div></div>
       </section>
+      ${tarjetaSemanas()}
       </div><div class="col">
       <h2 class="tit">Próximos cobros</h2>
       <div class="lista">${pend.length ? pend.map((x) => filaFactura(x.f, { cobrar: true })).join('') : '<p class="nada">No tienes nada pendiente de cobro.</p>'}</div>
       </div><div class="col">
+      ${tarjetaQueda(anioG)}
       <h2 class="tit">Últimas cobradas <button class="enlace" data-accion="ir" data-vista="facturas">Ver todas</button></h2>
       <div class="lista">${ultimas.map((f) => filaFactura(f)).join('')}</div></div></div>` };
   },
@@ -450,6 +455,80 @@ function graficoMeses(g, sel) {
   const etiquetas = g.meses.map((x, i) => `<text class="g-mes${x.m === sel ? ' sel' : ''}" x="${n1(L + i * gw + gw / 2)}" y="${H - 6}" text-anchor="middle">${MESES[i][0].toUpperCase()}</text>`).join('');
   return `<svg class="grafico" viewBox="0 0 ${W} ${H}" role="img" aria-label="Neto, gastos e impuestos de cada mes de ${g.anio}. Los mismos datos están en la tabla de abajo.">${rejilla}${barras}${etiquetas}${cols}</svg>
     <div class="leyenda mini g-ley">${SERIES.map(([k, t]) => `<span class="g-l-${k}">${t}</span>`).join('')}</div>`;
+}
+
+// --- Gráficos de Inicio (1.6.0): lo que queda cada mes y el dinero que entra y sale por semanas. Reglas en fiscal.js. ---
+/** Eje de euros para un gráfico: tope, suelo y paso «redondos», la función y(v) y las líneas de rejilla con sus etiquetas. */
+function ejeEuros(vals, { W, L, T, ph }) {
+  const n1 = (x) => x.toFixed(1), max = Math.max(1, ...vals), min = Math.min(0, ...vals);
+  const bruto = (max - min) / 3, pot = 10 ** Math.floor(Math.log10(bruto)), paso = [1, 2, 5, 10].find((k) => k * pot >= bruto) * pot;
+  const top = Math.ceil(max / paso) * paso, bot = Math.floor(min / paso) * paso;
+  const y = (v) => T + ph * (top - v) / (top - bot);
+  const corto = (v) => (Math.abs(v) >= 1000 ? String(v / 1000).replace('.', ',') + 'k' : String(v));
+  let rejilla = '';
+  for (let v = bot; v <= top + 1e-9; v += paso) rejilla += `<line class="g-rej${Math.abs(v) < 1e-9 ? ' g-cero' : ''}" x1="${L}" x2="${W - 4}" y1="${n1(y(v))}" y2="${n1(y(v))}"/><text class="g-tick" x="${L - 5}" y="${n1(y(v) + 3)}" text-anchor="end">${corto(Math.round(v))}</text>`;
+  return { y, rejilla, n1 };
+}
+/** Barra con el extremo del dato redondeado, apoyada en la línea del cero (hacia arriba o hacia abajo). */
+function barraSVG(clase, x, ancho, y0, y1) {
+  const h = Math.abs(y1 - y0), n1 = (v) => v.toFixed(1);
+  if (h < 0.4) return '';
+  const r = Math.min(2, h), s = y1 <= y0 ? 1 : -1;
+  return `<path class="${clase}" d="M${n1(x)},${n1(y0)}V${n1(y1 + s * r)}Q${n1(x)},${n1(y1)} ${n1(x + r)},${n1(y1)}H${n1(x + ancho - r)}Q${n1(x + ancho)},${n1(y1)} ${n1(x + ancho)},${n1(y1 + s * r)}V${n1(y0)}Z"/>`;
+}
+const G = { W: 360, H: 180, L: 34, T: 10, ph: 148 };   // medidas comunes de los gráficos de Inicio
+
+/** Inicio · «Lo que te queda cada mes»: una barra por mes; al tocar un mes, su detalle y sus facturas. */
+function tarjetaQueda(anio) {
+  const q = F.quedaPorMes(S.estado, anio), sel = S.mesInicio;
+  if (!q.total.n && !q.total.cuota) return '';
+  const { y, rejilla, n1 } = ejeEuros(q.meses.map((x) => x.queda), G), gw = (G.W - G.L - 4) / 12, bw = 13;
+  const barras = q.meses.map((x, i) => barraSVG('g-neto', G.L + i * gw + (gw - bw) / 2, bw, y(0), y(x.queda))).join('');
+  const etiquetas = q.meses.map((x, i) => `<text class="g-mes${x.m === sel ? ' sel' : ''}" x="${n1(G.L + i * gw + gw / 2)}" y="${G.H - 6}" text-anchor="middle">${MESES[i][0].toUpperCase()}</text>`).join('');
+  const cols = q.meses.map((x, i) => `<rect class="g-col${x.m === sel ? ' sel' : ''}" data-accion="mes-inicio" data-mes="${x.m}" x="${n1(G.L + i * gw)}" y="${G.T - 4}" width="${n1(gw)}" height="${G.ph + 22}"><title>${MESES[i]}: te queda ${eur(x.queda)}</title></rect>`).join('');
+  let detalle = '';
+  if (sel) {
+    const x = q.meses[sel - 1];
+    const fs = facturas().filter((f) => f.estado === 'cobrada' && (F.fechaCobroDe(f) || '').slice(0, 7) === `${anio}-${String(sel).padStart(2, '0')}` && M.netoDe(f, S.estado.ajustes) != null).sort(ordenFecha);
+    detalle = `<div class="g-detalle" data-et="queda-mes"><div class="et">${MESES[sel - 1]} ${anio}</div>
+      ${kv(`Cobrado en neto · ${plural(x.n, 'factura')}`, x.cobrado)}${x.cuota ? kv('Cuota de autónomos', -x.cuota) : ''}${kv('Te queda', x.queda, 'fuerte')}
+      ${fs.length ? `<div class="lista">${fs.map((f) => filaFactura(f)).join('')}</div>` : ''}</div>`;
+  }
+  return `<section class="tarjeta sep" data-et="queda">
+    <div class="et">Lo que te queda cada mes · ${anio}</div>
+    <svg class="grafico" viewBox="0 0 ${G.W} ${G.H}" role="img" aria-label="Lo que te queda de lo cobrado cada mes de ${anio}">${rejilla}${barras}${etiquetas}${cols}</svg>
+    <p class="pie">Lo cobrado cada mes, en neto${q.total.cuota ? ', menos la cuota de autónomos. El IVA no cuenta y el IRPF ya va apartado' : ''}. Cuenta el mes en que cobraste (o el de la factura, si no apuntaste el cobro). Toca un mes para ver sus facturas.</p>
+    ${detalle}</section>`;
+}
+
+/** Inicio · «Próximas 12 semanas»: lo que entra (arriba) y lo que sale (abajo) cada semana, y el acumulado. */
+function tarjetaSemanas() {
+  const fl = F.flujoSemanal(S.estado), sel = S.semana, dm = (iso) => `${Number(iso.slice(8))}/${Number(iso.slice(5, 7))}`;
+  const avisos = [fl.sinNeto.n ? `${plural(fl.sinNeto.n, 'factura pendiente no sale', 'facturas pendientes no salen')} porque aún no tiene${fl.sinNeto.n === 1 ? '' : 'n'} neto (bruto ${eur(fl.sinNeto.bruto)}).` : '',
+    fl.sinFecha.n ? `${plural(fl.sinFecha.n, 'cobro', 'cobros')} sin fecha, de clientes sin plazo (${eur(fl.sinFecha.importe)}).` : '',
+    fl.despues.n ? `${plural(fl.despues.n, 'cobro', 'cobros')} más adelante (${eur(fl.despues.importe)}).` : ''].filter(Boolean).join(' ');
+  if (!fl.entra && !fl.sale) return avisos ? `<h2 class="tit">Próximas 12 semanas</h2><p class="pie arriba0" data-et="semanas">No hay cobros ni pagos con fecha en las próximas 12 semanas. ${avisos}</p>` : '';
+  const { y, rejilla, n1 } = ejeEuros(fl.semanas.flatMap((s) => [s.entra, -s.sale, s.acumulado]), G), gw = (G.W - G.L - 4) / fl.semanas.length, bw = 12;
+  const cx = (i) => G.L + i * gw + gw / 2;
+  const barras = fl.semanas.map((s, i) => barraSVG('g-neto', cx(i) - bw / 2, bw, y(0), y(s.entra)) + barraSVG('g-impuestos', cx(i) - bw / 2, bw, y(0), y(-s.sale))).join('');
+  const linea = `<polyline class="g-linea" points="${fl.semanas.map((s, i) => `${n1(cx(i))},${n1(y(s.acumulado))}`).join(' ')}"/>${fl.semanas.map((s, i) => `<circle class="g-pt" cx="${n1(cx(i))}" cy="${n1(y(s.acumulado))}" r="2.6"/>`).join('')}`;
+  const etiquetas = fl.semanas.map((s, i) => (i % 2 ? '' : `<text class="g-mes${i === sel ? ' sel' : ''}" x="${n1(cx(i))}" y="${G.H - 6}" text-anchor="middle">${dm(s.desde)}</text>`)).join('');
+  const cols = fl.semanas.map((s, i) => `<rect class="g-col${i === sel ? ' sel' : ''}" data-accion="semana" data-i="${i}" x="${n1(G.L + i * gw)}" y="${G.T - 4}" width="${n1(gw)}" height="${G.ph + 22}"><title>Semana del ${dm(s.desde)}: entra ${eur(s.entra)} · sale ${eur(s.sale)} · acumulado ${eur(s.acumulado)}</title></rect>`).join('');
+  let detalle = '';
+  if (sel >= 0 && fl.semanas[sel]) {
+    const s = fl.semanas[sel], porId = new Map(facturas().map((f) => [f.id, f]));
+    detalle = `<div class="g-detalle" data-et="semana-det"><div class="et">${sel === 0 ? 'Esta semana' : 'Semana'} · ${rango(s)}</div>
+      ${s.salidas.map((x) => kv(`${esc(x.texto)} · ${x.atrasada ? 'atrasado' : fechaCorta(x.fecha)}${x.estimado ? ' · estimación' : ''}`, -x.importe)).join('')}
+      ${kv('Entra', s.entra)}${kv('Sale', -s.sale)}${kv('Acumulado hasta esta semana', s.acumulado, 'fuerte')}
+      ${s.entradas.length ? `<div class="lista">${s.entradas.map((x) => filaFactura(porId.get(x.id), { cobrar: true })).join('')}</div>` : ''}</div>`;
+  }
+  return `<h2 class="tit">Próximas 12 semanas</h2>
+    <section class="tarjeta" data-et="semanas">
+    <div class="g-cab"><span>Entra <b class="num">${eur(fl.entra)}</b></span><span>Sale <b class="num">${eur(fl.sale)}</b></span></div>
+    <svg class="grafico" viewBox="0 0 ${G.W} ${G.H}" role="img" aria-label="Dinero que entra y sale cada semana en las próximas 12 semanas">${rejilla}${barras}${linea}${etiquetas}${cols}</svg>
+    <div class="leyenda mini g-ley"><span class="g-l-neto">Entra</span><span class="g-l-impuestos">Sale</span><span class="g-l-linea">Acumulado</span></div>
+    <p class="pie">Cada cobro va en la semana de su fecha prevista; lo atrasado, en la de hoy. ${S.estado.ajustes.fechaAlta ? 'Salen la cuota y los impuestos de cada trimestre. ' : ''}El acumulado empieza en cero: la app no sabe lo que tienes en el banco. ${avisos} Toca una semana para ver de dónde sale.</p>
+    ${detalle}</section>`;
 }
 
 /** Apartado «Gráficos»: qué parte de lo cobrado te queda, y neto, gastos e impuestos mes a mes. Tocar un mes enseña de dónde sale. */
@@ -1261,7 +1340,9 @@ async function mostrarInforme(inf) {
 const ACCIONES = {
   ir(el) { S.vista = el.dataset.vista; S.sub = null; render(); window.scrollTo(0, 0); },
   sub(el) { S.vista = 'mas'; S.sub = el.dataset.sub || null; render(); window.scrollTo(0, 0); },
-  anio(el) { S.anio = el.dataset.anio; S.mes = 0; render(); },
+  anio(el) { S.anio = el.dataset.anio; S.mes = 0; S.mesInicio = 0; render(); },
+  'mes-inicio'(el) { const m = Number(el.dataset.mes); S.mesInicio = S.mesInicio === m ? 0 : m; render(); },
+  semana(el) { const i = Number(el.dataset.i); S.semana = S.semana === i ? -1 : i; render(); },
   mes(el) { S.mes = Number(el.dataset.mes); render(); },
   'ver-anio'(el) { S.anio = el.dataset.anio; S.f = { q: '', cliente: '', estado: '' }; S.vista = 'facturas'; S.sub = null; render(); window.scrollTo(0, 0); },
   'nueva-factura'() { hojaFactura(null); },

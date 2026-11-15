@@ -119,7 +119,7 @@ const ETIQUETAS_AJUSTES = {
   'fiscal.amortizaciones': 'Tabla de amortización', 'fiscal.amortizacionLibreMax': 'Material como gasto normal hasta',
   'fiscal.tarifaPlanaMeses': 'Meses de tarifa plana', 'fiscal.prorrogaMeses': 'Meses de prórroga', 'fiscal.smiAnual': 'Salario mínimo al año',
   'fiscal.genericosSSPct': 'Descuento de gastos genéricos %', 'fiscal.prorrogaPedida': 'Prórroga de la tarifa plana pedida', 'fiscal.avisoTarifaDias': 'Aviso de tarifa plana (días)',
-  'fiscal.tipoCotizacionPct': 'Tipo de cotización %', 'fiscal.limiteCuota': 'Límite de cuota al mes', 'fiscal.tramosCuota': 'Tabla de tramos de cuota',
+  'fiscal.tipoCotizacionPct': 'Tipo de cotización %', 'fiscal.limiteCuota': 'Límite de cuota al mes', 'fiscal.diaCargoCuota': 'Día de cargo de la cuota', 'fiscal.tramosCuota': 'Tabla de tramos de cuota',
   'fiscal.cuotas': 'Cuota de autónomos', 'fiscal.categorias': 'Categorías de gasto', 'fiscal.confirmados': 'Valores confirmados', 'fiscal.presentados': 'Modelos presentados',
 };
 

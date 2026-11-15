@@ -23,7 +23,7 @@
 //    en la casilla 01 del modelo 130 y en la reserva de la renta. No lleva IVA ni retención, no es «facturado» y no
 //    cambia el neto. Cuenta como ingreso SIN retención para la regla del 70 % (criterio prudente).
 
-import { vivos, cent, bruto, fechaISO, hoyISO, anioDe, fechaDeFactura, esAutonomo, desglose } from './modelo.js';
+import { vivos, cent, bruto, fechaISO, hoyISO, anioDe, fechaDeFactura, esAutonomo, desglose, netoDe, cobroPrevisto } from './modelo.js';
 
 const pct = (v) => Number(v) || 0;
 const dos = (n) => String(n).padStart(2, '0');
@@ -268,6 +268,91 @@ export function mesesDelAnio(estado, anio, hoy = hoyISO()) {
   for (const k of ['base', 'iva', 'irpf', 'cuota', 'gastos', 'impuestos', 'neto', 'total']) total[k] /= 100;
   total.pctQueda = total.total > 0 ? total.neto / total.total * 100 : null;
   return { anio, modo, meses: ms, total };
+}
+
+// ---------- Inicio: lo que queda cada mes y el dinero por semanas ----------
+// REGLAS (acordadas con el usuario el 15 de noviembre de 2026):
+//  - «Lo que te queda» de un mes = neto de las facturas COBRADAS ese mes − la cuota de autónomos de ese mes.
+//    El neto ya lleva apartado el IRPF (y nunca incluye el IVA). Los gastos NO se restan (regla de la app).
+//    Una factura cuenta en el mes de su fecha de cobro; si no la tiene (las migradas), en el de su fecha de factura.
+//    Por eso la suma del año puede no coincidir con el «neto cobrado» de Inicio, que va por fecha de factura.
+//  - Dinero por semanas (lunes a domingo; la semana 0 es la de hoy): ENTRA lo pendiente de cobro en la fecha prevista
+//    según el plazo del cliente (cooperativa: el neto apuntado; autónomo: el total que entra en el banco, con IVA).
+//    SALE la cuota el día de cargo de ajustes, y los modelos 303 y 130 y la reserva de la renta en su último día.
+//    Lo atrasado (cobros o modelos sin presentar) va en la semana de hoy. Lo que no tiene neto o fecha no se dibuja.
+//    El acumulado empieza en cero: la app no sabe el saldo del banco.
+
+/** Fecha en la que cuenta una factura cobrada: la de cobro o, si falta, la de factura. */
+export const fechaCobroDe = (f) => f.fechaCobro || fechaDeFactura(f);
+/** { anio, meses[12]: { m, n, cobrado, cuota, queda }, total: { n, cobrado, cuota, queda } } en euros. */
+export function quedaPorMes(estado, anio, hoy = hoyISO()) {
+  anio = String(anio);
+  const { ajustes } = estado, ms = Array.from({ length: 12 }, (_, i) => ({ m: i + 1, n: 0, cobrado: 0, cuota: 0 }));
+  for (const f of vivos(estado.facturas)) {
+    const fecha = f.estado === 'cobrada' ? fechaCobroDe(f) : null, neto = fecha ? netoDe(f, ajustes) : null;
+    if (!fecha || fecha.slice(0, 4) !== anio || neto == null) continue;
+    const x = ms[Number(fecha.slice(5, 7)) - 1]; x.n++; x.cobrado += cent(neto);
+  }
+  if (ajustes.fechaAlta && anio >= ajustes.fechaAlta.slice(0, 4)) for (const m of mesesConCuota(estado, anio, hoy, false)) ms[m - 1].cuota += cent(cuotaDelMes(ajustes.fiscal, `${anio}-${dos(m)}`));
+  const total = { n: 0, cobrado: 0, cuota: 0, queda: 0 };
+  for (const x of ms) {
+    x.queda = x.cobrado - x.cuota;
+    for (const k of Object.keys(total)) total[k] += x[k];
+    for (const k of ['cobrado', 'cuota', 'queda']) x[k] /= 100;
+  }
+  for (const k of ['cobrado', 'cuota', 'queda']) total[k] /= 100;
+  return { anio, meses: ms, total };
+}
+
+/**
+ * Dinero que entra y sale en las próximas `semanas` semanas.
+ * { desde (lunes de esta semana), semanas: [{ i, desde, hasta, entra, sale, neto, acumulado,
+ *     entradas: [{ id (factura), fecha, importe, atrasada }], salidas: [{ tipo: 'cuota'|'modelo', id?, texto, fecha, importe, atrasada, estimado }] }],
+ *   entra, sale (totales), sinNeto: { n, bruto } (pendientes sin neto apuntado), sinFecha: { n, importe } (cliente sin plazo), despues: { n, importe } }
+ */
+export function flujoSemanal(estado, hoy = hoyISO(), semanas = 12) {
+  const { ajustes } = estado, fiscal = ajustes.fiscal, alta = ajustes.fechaAlta;
+  const [a, m, d] = hoy.split('-').map(Number), dia = new Date(a, m - 1, d).getDay();
+  const mas = (iso, n) => { const [y, mo, dd] = iso.split('-').map(Number); return fechaISO(new Date(y, mo - 1, dd + n)); };
+  const lunes = mas(hoy, -((dia + 6) % 7));
+  const S = Array.from({ length: semanas }, (_, i) => ({ i, desde: mas(lunes, i * 7), hasta: mas(lunes, i * 7 + 6), entra: 0, sale: 0, entradas: [], salidas: [] }));
+  const idx = (fecha) => (fecha < hoy ? 0 : Math.floor((diasEntre(lunes, fecha) - 1) / 7));
+  const out = { desde: lunes, semanas: S, entra: 0, sale: 0, sinNeto: { n: 0, bruto: 0 }, sinFecha: { n: 0, importe: 0 }, despues: { n: 0, importe: 0 } };
+  const clientes = new Map(estado.clientes.map((c) => [c.id, c]));
+  for (const f of vivos(estado.facturas)) {
+    if (f.estado !== 'pendiente') continue;
+    const importe = esAutonomo(f, ajustes) ? desglose(f, fiscal).total : f.neto;
+    if (importe == null) { out.sinNeto.n++; out.sinNeto.bruto += cent(bruto(f)); continue; }
+    const p = cobroPrevisto(f, clientes.get(f.clienteId));
+    if (!p) { out.sinFecha.n++; out.sinFecha.importe += cent(importe); continue; }
+    const i = idx(p.hasta);
+    if (i >= semanas) { out.despues.n++; out.despues.importe += cent(importe); continue; }
+    S[i].entradas.push({ id: f.id, fecha: p.hasta, importe, atrasada: p.hasta < hoy }); S[i].entra += cent(importe);
+  }
+  const sale = (i, s) => { if (i < semanas) { S[i].salidas.push(s); S[i].sale += cent(s.importe); } };
+  if (alta) {
+    const fin = S[semanas - 1].hasta;
+    for (let y = a, mo = m; `${y}-${dos(mo)}` <= fin.slice(0, 7); mo === 12 ? (y++, mo = 1) : mo++) {
+      const ym = `${y}-${dos(mo)}`, fecha = `${ym}-${dos(Math.min(Math.max(1, pct(fiscal.diaCargoCuota) || 31), new Date(y, mo, 0).getDate()))}`;
+      const importe = cuotaDelMes(fiscal, ym);
+      if (ym < alta.slice(0, 7) || fecha < hoy || fecha > fin || !(importe > 0)) continue;
+      sale(idx(fecha), { tipo: 'cuota', texto: 'Cuota de autónomos', fecha, importe, atrasada: false, estimado: false });
+    }
+    for (let y = Math.max(Number(alta.slice(0, 4)), a - 1); y <= a; y++) {
+      for (const p of plazosDelAnio(estado, String(y), hoy)) {
+        if (!['303', '130', 'renta'].includes(String(p.modelo)) || !p.aplica || p.presentado || !(p.importe > 0) || p.fecha > fin) continue;
+        sale(idx(p.fecha), { tipo: 'modelo', id: p.id, texto: `${p.titulo} · ${p.periodo}`, fecha: p.fecha, importe: p.importe, atrasada: p.fecha < hoy, estimado: p.modelo === 'renta' });
+      }
+    }
+  }
+  let acum = 0;
+  for (const s of S) {
+    out.entra += s.entra; out.sale += s.sale; acum += s.entra - s.sale;
+    s.neto = (s.entra - s.sale) / 100; s.acumulado = acum / 100; s.entra /= 100; s.sale /= 100;
+    s.entradas.sort((x, y) => x.fecha.localeCompare(y.fecha)); s.salidas.sort((x, y) => x.fecha.localeCompare(y.fecha));
+  }
+  out.entra /= 100; out.sale /= 100; out.sinNeto.bruto /= 100; out.sinFecha.importe /= 100; out.despues.importe /= 100;
+  return out;
 }
 
 // ---------- tarifa plana ----------

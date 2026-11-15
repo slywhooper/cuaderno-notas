@@ -570,6 +570,50 @@ await prueba('mes a mes: lo que queda y lo que se aparta de cada mes, y las suma
   assert.equal(F.mesesDelAnio(M.estadoVacio(), '2027', HOY).total.pctQueda, null);
 });
 
+console.log('Inicio: lo que queda cada mes y el dinero por semanas');
+await prueba('lo que queda cada mes: neto de lo cobrado ese mes menos la cuota; por fecha de cobro o, si falta, de factura', () => {
+  let g = F.quedaPorMes(A, '2027', HOY);
+  // 2027: solo está cobrada la de mayo (500 − 7 % = 465). La cuota (88,64) se resta de enero a junio.
+  assert.deepEqual(g.meses.map((x) => x.queda), [-88.64, -88.64, -88.64, -88.64, 376.36, -88.64, 0, 0, 0, 0, 0, 0]);
+  assert.deepEqual([g.total.n, g.total.cobrado, g.total.cuota, g.total.queda], [1, 465, 531.84, -66.84]);
+  g = F.quedaPorMes(A, '2026', HOY);                                       // cooperativa: el neto apuntado, sin cuota
+  assert.deepEqual([g.meses[11].cobrado, g.meses[11].cuota, g.total.queda], [400, 0, 400]);
+  const E = structuredClone(A); E.facturas.find((f) => f.id === 'a2').fechaCobro = '2027-06-02';   // cobrada en junio: cuenta en junio
+  g = F.quedaPorMes(E, '2027', HOY);
+  assert.deepEqual([g.meses[4].queda, g.meses[5].queda, g.total.queda], [-88.64, 376.36, -66.84]);
+});
+await prueba('dinero por semanas: entra lo pendiente en su fecha prevista; sale la cuota y los modelos; lo atrasado, esta semana', () => {
+  // Hoy es martes 15 de junio de 2027: la semana 0 va del lunes 14 al domingo 20.
+  let fl = F.flujoSemanal(A, HOY);
+  assert.deepEqual([fl.desde, fl.semanas.length, fl.semanas[0].hasta, fl.semanas[11].desde], ['2027-06-14', 12, '2027-06-20', '2027-08-30']);
+  assert.deepEqual(fl.sinFecha, { n: 1, importe: 1140 });                  // la pendiente es de un cliente sin plazo: no se dibuja
+  // Salidas: el 303 del 1T (183,75, venció el 20 de abril y no está presentado) va en la semana de hoy; cuota el 30 de junio
+  // (semana 2), el 31 de julio (semana 6) y el 31 de agosto (semana 11); el 303 del 2T (84 €) el 20 de julio (semana 5).
+  assert.deepEqual(fl.semanas.map((s) => s.sale), [183.75, 0, 88.64, 0, 0, 84, 88.64, 0, 0, 0, 0, 88.64]);
+  assert.deepEqual(fl.semanas[0].salidas.map((s) => [s.tipo, s.id, s.fecha, s.atrasada]), [['modelo', '2027-303-1', '2027-04-20', true]]);
+  const E = structuredClone(A); E.clientes[0].plazo = { tipo: 'dias', dias: 131 };   // 10 de febrero + 131 días = lunes 21 de junio: semana 1
+  fl = F.flujoSemanal(E, HOY);
+  assert.deepEqual([fl.semanas[1].entra, fl.semanas[1].entradas.map((x) => [x.id, x.fecha, x.importe, x.atrasada])], [1140, [['a1', '2027-06-21', 1140, false]]]);
+  assert.deepEqual(fl.semanas.map((s) => s.acumulado), [-183.75, 956.25, 867.61, 867.61, 867.61, 783.61, 694.97, 694.97, 694.97, 694.97, 694.97, 606.33]);
+  assert.deepEqual([fl.entra, fl.sale], [1140, 533.67]);
+  E.clientes[0].plazo = { tipo: 'dias', dias: 130 };                      // + 130 días = domingo 20 de junio: aún semana 0
+  assert.equal(F.flujoSemanal(E, HOY).semanas[0].entra, 1140);
+  E.clientes[0].plazo = { tipo: 'dias', dias: 30 };                       // ya tendría que haber entrado: atrasada, esta semana
+  assert.deepEqual(F.flujoSemanal(E, HOY).semanas[0].entradas.map((x) => x.atrasada), [true]);
+  E.clientes[0].plazo = { tipo: 'dias', dias: 300 };                      // más allá de las 12 semanas
+  assert.deepEqual(F.flujoSemanal(E, HOY).despues, { n: 1, importe: 1140 });
+  E.ajustes.fiscal.presentados['2027-303-1'] = true; E.ajustes.fiscal.diaCargoCuota = 5;   // presentado: ya no sale; cuota el día 5
+  fl = F.flujoSemanal(E, HOY);
+  // 5 de julio (semana 3), 5 de agosto (semana 7) y domingo 5 de septiembre (último día de la semana 11); el 5 de junio ya pasó
+  assert.deepEqual(fl.semanas.map((s) => s.sale), [0, 0, 0, 88.64, 0, 84, 0, 88.64, 0, 0, 0, 88.64]);
+});
+await prueba('dinero por semanas en cooperativa: solo entradas con neto apuntado; lo que no tiene neto se cuenta aparte', () => {
+  const E = M.estadoVacio(); E.clientes.push({ id: 'c1', nombre: 'Cliente', plazo: { tipo: 'dias', dias: 10 }, _mod: 1, _base: 0 });
+  E.facturas.push(fac('p1', '2027-06-10', 'pendiente', 500, { neto: 430 }), fac('p2', '2027-06-12', 'pendiente', 300), fac('p3', '2027-06-01', 'abierta', 900, { neto: 800 }));
+  const fl = F.flujoSemanal(E, HOY);
+  assert.deepEqual([fl.semanas[0].entra, fl.sale, fl.sinNeto], [430, 0, { n: 1, bruto: 300 }]);   // 10 de junio + 10 días = domingo 20
+});
+
 console.log('Enlace de solo lectura');
 const cifras = (e, hoy) => [M.resumenPorAnio(e).map((r) => [r.anio, r.n, r.bruto, r.netoCobrado, r.dias]), ['2026', '2027'].map((a) => { const x = F.anioFiscal(e, a, hoy); return [x.modo, x.base, x.iva, x.cuota, x.rendimiento, x.neto, x.total303, x.reservaRenta, x.ayudas]; }),
   M.vivos(e.clientes).map((c) => [c.nombre, M.textoPlazo(c.plazo)]), M.vivos(e.gastos).length, F.hucha(e, hoy).total];
