@@ -153,14 +153,21 @@ Fase 3, parte B (15 de noviembre de 2026; plan completo en la sección 14 del do
   Es el que se compara con el salario mínimo y, en el punto 4, con los tramos de cuota. «A este ritmo» = lo que llevas
   × días de actividad del año / días transcurridos.
 
+- Cuota sin tarifa plana (1.2.2, `cuotaEstimada()`, `tramoDe()`, `cuotaDeTramo()`): beneficio al mes = beneficio para la
+  Seguridad Social del año (a este ritmo) / días de actividad × 30. La tabla `tramosCuota` (`hasta` al mes, `null` = sin
+  límite; `base` mínima) y `tipoCotizacionPct` son las de 2026, editables. Cuota = base mínima × tipo. `limiteCuota`
+  (300 € de partida, decisión del usuario): la app dice cuánto gasto deducible falta en el año para no pasarlo; cada
+  euro de gasto baja el beneficio (1 − genéricos) × (1 − difícil justificación, salvo que ya esté en su tope). Es solo
+  una estimación: NO cambia la cuota que la app resta, que sigue saliendo de `cuotas`.
+
 ## Lo que falta
 
 **Fases 1 y 2 y fase 3 parte A: hechas** (desde la versión 1.2.0). La parte A: casillas de los modelos 303, 130 y 390 con
 explicación, resumen para la renta, material que se amortiza, gastos de difícil justificación, minoración del 130 y
 reducción por inicio de actividad.
 
-**Fase 3, parte B (en marcha):** hecho el punto 1, tarifa plana (1.2.1). Pendientes, en este orden de trabajo: 4) cuota
-desde el tercer año con tabla de tramos editable y gasto que falta para bajar de un límite; 5) ayuda puntual como
+**Fase 3, parte B (en marcha):** hechos el punto 1, tarifa plana (1.2.1), y el 4, cuota
+según el beneficio con tabla de tramos editable (1.2.2). Pendientes, en este orden de trabajo: 5) ayuda puntual como
 ingreso de la actividad, con interruptor «cuenta para la Seguridad Social»; 2) gráficos mes a mes; 3) libros registro
 en CSV (pueden salir de `aCSV()` y `gastosCSV()`). El comparador cooperativa / autónomo NO se hace (decisión del usuario).
 

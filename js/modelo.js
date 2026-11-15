@@ -69,6 +69,13 @@ export function fiscalPorDefecto() {
     genericosSSPct: 7,            // la Seguridad Social descuenta este % (gastos genéricos) al calcular el beneficio
     prorrogaPedida: false,        // decisión mía: ya he pedido la prórroga de la tarifa plana
     avisoTarifaDias: 60,          // avisar de que acaba la tarifa plana con estos días de antelación
+    tipoCotizacionPct: 31.5,      // cuota sin tarifa plana = base de cotización × este % (el de 2026)
+    limiteCuota: 300,             // decisión mía: cuota al mes que no quiero pasar
+    tramosCuota: [                // cuota según el beneficio: beneficio al mes «hasta» (null = sin límite) y base mínima (tabla de 2026)
+      { hasta: 670, base: 653.59 }, { hasta: 900, base: 718.95 }, { hasta: 1166.7, base: 849.67 }, { hasta: 1300, base: 950.98 },
+      { hasta: 1500, base: 960.78 }, { hasta: 1700, base: 960.78 }, { hasta: 1850, base: 1143.79 }, { hasta: 2030, base: 1209.15 },
+      { hasta: 2330, base: 1274.51 }, { hasta: 2760, base: 1356.21 }, { hasta: 3190, base: 1437.91 }, { hasta: 3620, base: 1519.61 },
+      { hasta: 4050, base: 1601.31 }, { hasta: 6000, base: 1732.03 }, { hasta: null, base: 1928.1 }],
     categorias: [
       { id: 'material', nombre: 'Material y herramientas', ivaPct: 21, dedIva: 100, dedIrpf: 100 },
       { id: 'vehiculo', nombre: 'Gasolina y vehículo', ivaPct: 21, dedIva: 50, dedIrpf: 0 },

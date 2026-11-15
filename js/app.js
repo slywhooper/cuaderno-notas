@@ -17,7 +17,7 @@ import * as F from './fiscal.js';
 import * as MO from './modelos.js';
 import { aCSV, gastosCSV } from './csv.js';
 
-const VERSION = '1.2.1'; // cambiar también en sw.js
+const VERSION = '1.2.2'; // cambiar también en sw.js
 const MIN_CLAVE = 4; // decisión del usuario: código corto tipo PIN (él sabe que una copia así se puede forzar)
 
 const S = {
@@ -109,6 +109,7 @@ const PROPIOS = [
   ['subidaSimPct', 'Simulación: subida de mi tarifa', '%'],
   ['avisoPlazoDias', 'Avisarme de un plazo con esta antelación', 'días'],
   ['avisoTarifaDias', 'Avisarme de que acaba la tarifa plana con esta antelación', 'días'],
+  ['limiteCuota', 'Cuota al mes que no quiero pasar (sin tarifa plana)', '€'],
 ];
 
 function aviso(texto) {
@@ -423,12 +424,30 @@ function tarjetaTarifa(a) {
       ${tp.anios.map((r) => (r.futuro ? kv(`Beneficio para la Seguridad Social · ${r.anio}`, 'Aún sin datos')
         : `${linea(r)}${veredicto(r, r.cumple ? `${r.anio}: por debajo del salario mínimo (${eur(r.smi)}).` : `${r.anio}: ${r.cerrado ? 'pasaste' : 'a este ritmo pasas'} del salario mínimo (${eur(r.smi)}).`)}${de.replace('ANIO', r.anio)}`)).join('')}`;
   }
-  const tramo = tp.faltaTramo && (tp.fase === 'acabada' || tp.avisar) ? `<p class="veredicto amb">⚠ Desde ${mesLargo(tp.mesNuevo)} ya no vale la tarifa plana y no tienes apuntada la cuota nueva. <button class="enlace" data-accion="sub" data-sub="fiscal">Añadir el tramo</button></p>` : '';
+  const tramo = tp.faltaTramo && (tp.fase === 'acabada' || tp.avisar) ? `<p class="veredicto amb">⚠ Desde ${mesLargo(tp.mesNuevo)} ya no vale la tarifa plana y no tienes apuntada la cuota nueva. Con tu beneficio de ahora serían unos ${eur(F.cuotaEstimada(S.estado, M.hoyISO().slice(0, 4)).cuota)} al mes. <button class="enlace" data-accion="sub" data-sub="fiscal">Añadir el tramo</button></p>` : '';
   const boton = tp.fase === 'acabada' && tp.pedida ? '' : `<button class="btn chico ${tp.pedida ? '' : 'sec'}" data-accion="prorroga">${tp.pedida ? '✓ Prórroga pedida' : 'He pedido la prórroga'}</button>`;
   return `<section class="tarjeta sep" data-et="tarifa">
     <div class="cab-t"><div><div class="et">Tarifa plana</div><div class="medio">${cab}</div>${sub}</div>${boton}</div>
     ${cuerpo}${tramo}
     <p class="pie">La app no cambia tu cuota sola: los tramos los pones tú en Ajustes de autónomo. Comprueba la fecha exacta en tu resolución de alta. ${enlace('tarifa', 'Seguridad Social')}</p></section>`;
+}
+
+/** Tarjeta «Cuota sin tarifa plana»: la cuota que tocaría con el beneficio del año y el gasto que falta para no pasar del límite. */
+function tarjetaCuota(a) {
+  const c = F.cuotaEstimada(S.estado, a.anio);
+  if (!c.tramo) return '';
+  const enCurso = a.modo === 'real' && a.anio === M.hoyISO().slice(0, 4);
+  const v = c.falta == null ? `<p class="veredicto amb">⚠ Ningún tramo de la tabla baja de ${eur(c.limite)} al mes.</p>`
+    : c.falta === 0 ? `<p class="veredicto ok">✓ No pasas de tu límite de ${eur(c.limite)} al mes.</p>`
+    : `<p class="veredicto amb">⚠ Para no pasar de ${eur(c.limite)} al mes te faltan <b class="num">${eur(c.falta)}</b> de gasto deducible en el año: bajarías al tramo de ${eur(c.objetivo.cuota)}.</p>`;
+  return `<section class="tarjeta sep" data-et="cuota">
+    <div class="et">Cuota sin tarifa plana · estimación</div>
+    <div class="medio"><span class="num">${eur(c.cuota)}</span> <span class="mini">al mes</span></div>
+    ${kv(`Beneficio para la Seguridad Social al mes${enCurso ? ' · a este ritmo' : ''}`, c.mensual)}
+    ${kv('Tu tramo', c.tramo.hasta == null ? 'El último de la tabla' : `hasta ${eur(c.tramo.hasta)} al mes`)}
+    ${v}
+    <button class="enlace" data-accion="detalle-cuota" data-anio="${a.anio}">Ver de dónde sale</button>
+    <p class="pie">Lo que pagarías con un año como ${a.anio} cuando se acabe la tarifa plana, cotizando por la base mínima de tu tramo. La tabla de tramos y tu límite se cambian en <button class="enlace" data-accion="sub" data-sub="fiscal">Ajustes de autónomo</button>.</p></section>`;
 }
 
 function impResumen(a) {
@@ -446,7 +465,7 @@ function impResumen(a) {
       ${kv('IVA para el modelo 303', h.iva)}${kv('IRPF para el modelo 130', a.obligado130 || h.m130 ? h.m130 : 'No toca')}${kv(`Reserva para la renta (${numEntrada(fi.reservaRentaPct)} % del beneficio)`, h.renta)}
       ${sim ? '' : '<button class="enlace" data-accion="detalle-hucha">Ver de dónde sale</button>'}
     </section>
-    ${tarjetaTarifa(a)}
+    ${tarjetaTarifa(a)}${tarjetaCuota(a)}
     <p class="pie">El IVA no es tuyo: lo cobras y lo ingresas. La reserva para la renta sale de tu neto; es una estimación tuya y se cambia en Ajustes de autónomo.</p>
     <h2 class="tit">${a.anio} en números</h2>
     <section class="tarjeta">
@@ -629,6 +648,16 @@ const SUBVISTAS = {
       <div class="par">${tramos}<button class="btn sec chico" data-accion="add-cuota">＋ Añadir tramo</button>
         <p class="pie">El primer tramo vale desde el alta si no le pones mes. Añade otro cuando cambie la cuota (fin de la tarifa plana, subida anual). La de partida es la tarifa plana con el recargo MEI.</p>
         ${estado('cuotas')}${enlace('cuota')}</div>
+      <h2 class="tit">Cuota según tu beneficio (sin tarifa plana)</h2>
+      <div class="par">${campo(['tipoCotizacionPct', 'Tipo de cotización', '%'])}
+        ${fi.tramosCuota.map((t, i) => `<div class="tramo" data-i="${i}">
+          <label>Beneficio al mes hasta €<input inputmode="decimal" data-tramoc="hasta" placeholder="sin límite" value="${numEntrada(t.hasta)}"></label>
+          <label>Base mínima €<input inputmode="decimal" data-tramoc="base" value="${numEntrada(t.base)}"></label>
+          <div class="mini num" data-et="cuota-tramo">cuota ${eur(F.cuotaDeTramo(t, fi))} al mes</div>
+          ${fi.tramosCuota.length > 1 ? `<button type="button" class="quitar corto" data-accion="quitar-tramoc" data-i="${i}">Quitar</button>` : ''}</div>`).join('')}
+        <button class="btn sec chico" data-accion="add-tramoc">＋ Añadir tramo</button>
+        <p class="pie">Es la tabla de 2026. La cuota de cada tramo es su base mínima por el tipo de cotización. El último tramo va con el «hasta» vacío. Sirve para estimar tu cuota cuando se acabe la tarifa plana; no cambia la cuota que la app te resta, que es la de «Cuota de autónomos».</p>
+        ${estado('tramosCuota')}${enlace('cuota')}</div>
       <h2 class="tit">Decisiones mías</h2>
       <div class="par">${PROPIOS.map(campo).join('')}</div>
       <h2 class="tit">Categorías de gasto</h2>
@@ -1130,6 +1159,17 @@ const ACCIONES = {
       ${kv('Salario mínimo al año', r.smi)}
       <p class="pie">El salario mínimo y el descuento se cambian en Ajustes de autónomo.</p>`, botones: [{ texto: 'Cerrar', valor: true }] });
   },
+  'detalle-cuota'(el) {
+    const c = F.cuotaEstimada(S.estado, el.dataset.anio), fi = fiscal();
+    const tope = c.objetivo && c.objetivo.hasta != null ? redondo(c.objetivo.hasta * c.dias / 30) : null;
+    dialogo({ titulo: `Cuota sin tarifa plana · ${c.anio}`, cuerpo: `<p>Sin tarifa plana pagas según tu beneficio para la Seguridad Social al mes: el del año, repartido por los días de actividad y multiplicado por 30.</p>
+      ${kv('Beneficio para la Seguridad Social al año', c.anual)}${kv('Días de actividad del año', String(c.dias))}${kv('Al mes', c.mensual)}
+      ${kv('Tu tramo', c.tramo.hasta == null ? 'El último de la tabla' : `hasta ${eur(c.tramo.hasta)}`)}${kv('Base mínima del tramo', c.tramo.base)}${kv('Tipo de cotización', `${numEntrada(fi.tipoCotizacionPct)} %`)}${kv('Cuota al mes', c.cuota, 'fuerte')}
+      ${c.falta ? `<p>Para caer en el tramo de ${eur(c.objetivo.cuota)} (hasta ${eur(c.objetivo.hasta)} al mes), tu beneficio del año tiene que bajar a ${eur(tope)}. Cada 100 € de gasto deducible lo bajan ${numEntrada(redondo(c.porEuro * 100))} €.</p>${kv('Gasto deducible que te falta en el año', c.falta, 'fuerte')}` : ''}
+      <p class="pie">Es una estimación: la Seguridad Social hace la cuenta definitiva al año siguiente con los datos de tu renta. Puedes cotizar por una base más alta que la mínima; la app no lo tiene en cuenta.</p>`, botones: [{ texto: 'Cerrar', valor: true }] });
+  },
+  'add-tramoc'() { fiscal().tramosCuota.push({ hasta: null, base: 0 }); guardarAjustes(true); },
+  'quitar-tramoc'(el) { fiscal().tramosCuota.splice(Number(el.dataset.i), 1); guardarAjustes(true); },
   'detalle-hucha'() {
     const h = F.hucha(S.estado);
     dialogo({ titulo: 'Hucha de impuestos', cuerpo: `<p>Lo que deberías tener apartado hoy para Hacienda. Cada línea sale de la hucha cuando marcas ese modelo como presentado.</p>
@@ -1272,7 +1312,7 @@ document.addEventListener('change', (e) => {
   else if (el.dataset.fiscal) {
     const n = leerNumero(el.value), k = el.dataset.fiscal;
     if (n == null || n < 0) el.value = numEntrada(fiscal()[k]);
-    else { fiscal()[k] = n; guardarAjustes(); }
+    else { fiscal()[k] = n; guardarAjustes(k === 'tipoCotizacionPct'); }
   }
   else if (el.dataset.fiscalSel) { fiscal()[el.dataset.fiscalSel] = el.value === 'true' ? true : el.value === 'false' ? false : el.value; guardarAjustes(true); }
   else if (el.dataset.confirmar) {
@@ -1282,6 +1322,11 @@ document.addEventListener('change', (e) => {
   else if (el.dataset.minoracion) {
     const t = fiscal().minoracion130[Number(el.closest('.tramo').dataset.i)], n = leerNumero(el.value);
     if (n == null || n < 0) el.value = numEntrada(t[el.dataset.minoracion]); else { t[el.dataset.minoracion] = n; guardarAjustes(); }
+  }
+  else if (el.dataset.tramoc) {
+    const fila = el.closest('.tramo'), t = fiscal().tramosCuota[Number(fila.dataset.i)], k = el.dataset.tramoc, n = leerNumero(el.value);
+    if (n != null && n < 0 || (n == null && k === 'base')) el.value = numEntrada(t[k]);
+    else { t[k] = n; fila.querySelector('[data-et=cuota-tramo]').textContent = `cuota ${eur(F.cuotaDeTramo(t, fiscal()))} al mes`; guardarAjustes(); }
   }
   else if (el.dataset.cuota) {
     const t = fiscal().cuotas[Number(el.closest('.tramo').dataset.i)];

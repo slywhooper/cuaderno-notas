@@ -2,7 +2,7 @@
 // IMPORTANTE: cada vez que cambies cualquier archivo de la app, sube VERSION (aquí y en js/app.js).
 // Si no, los dispositivos seguirán usando la versión guardada.
 
-const VERSION = '1.2.1';
+const VERSION = '1.2.2';
 const CACHE = 'msf-' + VERSION;
 const ARCHIVOS = [
   './', './index.html', './manifest.webmanifest', './css/app.css',

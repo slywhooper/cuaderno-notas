@@ -436,6 +436,42 @@ await prueba('los ajustes nuevos de la tarifa plana se añaden a un estado guard
   assert.deepEqual([f.tarifaPlanaMeses, f.prorrogaMeses, f.smiAnual, f.genericosSSPct, f.prorrogaPedida, f.avisoTarifaDias], [12, 12, 17094, 7, false, 60]);
 });
 
+console.log('Fase 3B: cuota según el beneficio');
+await prueba('tabla de tramos: cuota = base mínima × tipo de cotización; el tramo es el primero que no se supera', () => {
+  const f = A.ajustes.fiscal;
+  // 950,98 × 31,5 % = 299,56 · 960,78 × 31,5 % = 302,65
+  assert.deepEqual(F.tramoDe(f, 1282), { hasta: 1300, base: 950.98, cuota: 299.56 });
+  assert.deepEqual(F.tramoDe(f, 1300.01), { hasta: 1500, base: 960.78, cuota: 302.65 });
+  assert.deepEqual([F.tramoDe(f, -50).cuota, F.tramoDe(f, 670).cuota, F.tramoDe(f, 7000)], [205.88, 205.88, { hasta: null, base: 1928.1, cuota: 607.35 }]);
+});
+await prueba('cuota estimada y gasto deducible que falta para no pasar del límite', () => {
+  const e = estadoAutonomo(); e.facturas.push(fac('a4', '2027-09-01', 'pendiente', 20000, { ivaPct: 21, retPct: 7 }));
+  // 2027 cerrado: 21.500 de ingresos − 321 de gastos − 1.063,68 de cuota = 20.115,32; − 5 % (1.005,77) = 19.109,55 de beneficio.
+  // Seguridad Social: (19.109,55 + 1.063,68) × 0,93 = 18.761,10 al año; / 365 × 30 = 1.542,01 al mes -> tramo hasta 1.700: 302,65 €.
+  let c = F.cuotaEstimada(e, '2027', '2028-02-01');
+  assert.deepEqual([c.anual, c.dias, c.mensual, c.tramo.hasta, c.cuota, c.limite, c.objetivo.hasta, c.objetivo.cuota], [18761.1, 365, 1542.01, 1700, 302.65, 300, 1300, 299.56]);
+  // Para bajar a 1.300 al mes (15.816,67 al año) sobran 2.944,43; cada euro de gasto baja 0,93 × 0,95 = 0,8835 -> 3.332,69 de gasto.
+  assert.equal(c.falta, 3332.69);
+  e.gastos.push(gas('g9', '2027-10-01', 3332.69, 0, 100, 100));          // con ese gasto de más, ya cae en el tramo de 299,56
+  c = F.cuotaEstimada(e, '2027', '2028-02-01');
+  assert.deepEqual([c.cuota, c.falta], [299.56, 0]);
+  e.ajustes.fiscal.limiteCuota = 100;                                     // ningún tramo baja de 100 €: no hay objetivo
+  c = F.cuotaEstimada(e, '2027', '2028-02-01');
+  assert.deepEqual([c.objetivo, c.falta], [null, null]);
+  c = F.cuotaEstimada(A, '2027', HOY);                                    // año en curso con poco beneficio: primer tramo
+  // 2.344,75 a este ritmo / 365 × 30 = 192,72 al mes
+  assert.deepEqual([c.anual, c.mensual, c.cuota, c.falta], [2344.75, 192.72, 205.88, 0]);
+});
+await prueba('con los gastos de difícil justificación en su tope, cada euro de gasto baja el beneficio entero (× 0,93)', () => {
+  const e = estadoAutonomo(); e.facturas.push(fac('a5', '2027-09-01', 'pendiente', 60000, { ivaPct: 21, retPct: 7 }));
+  const c = F.cuotaEstimada(e, '2027', '2028-02-01');
+  // antes de difícil justificación: 61.500 − 321 − 1.063,68 = 60.115,32; el 5 % pasaría de 2.000, así que son 2.000
+  assert.equal(F.anioFiscal(e, '2027', '2028-02-01').dificil, 2000);
+  assert.equal(c.porEuro, 0.93);
+  // (58.115,32 + 1.063,68) × 0,93 = 55.036,47 al año; sobran 55.036,47 − 15.816,67 = 39.219,80; / 0,93 = 42.171,83
+  assert.deepEqual([c.anual, c.falta], [55036.47, 42171.83]);
+});
+
 const ruta = process.argv[2];
 if (ruta) {
   console.log('Copia real: ' + ruta);

@@ -93,6 +93,25 @@ assert.equal(await A.locator('[data-accion=prorroga]').count(), 0);  // en simul
 await A.click('[data-accion=detalle-ss]');
 assert.match(await texto(A, '.dlg'), new RegExp(`Beneficio para Hacienda ${re(eur(r.rendimiento))}.*Cuota de autónomos pagada ${re(eur(r.cuota))}.*Beneficio para la Seguridad Social ${re(eur(r.llevas))}`));
 await foto(A, '11b-tarifa-simulacion'); await A.click('.dlg-b .btn');
+let ce = F.cuotaEstimada(esperado, anio);
+assert.match(await texto(A, '[data-et=cuota]'), new RegExp(`${re(eur(ce.cuota))} al mes.*Beneficio para la Seguridad Social al mes ${re(eur(ce.mensual))}`));
+assert.match(await texto(A, '[data-et=cuota]'), ce.falta ? new RegExp(`te faltan ${re(eur(ce.falta))} de gasto deducible`) : /No pasas de tu límite/);
+await A.click('[data-accion=detalle-cuota]');
+assert.match(await texto(A, '.dlg'), new RegExp(`Base mínima del tramo ${re(eur(ce.tramo.base))}.*Cuota al mes ${re(eur(ce.cuota))}`));
+await foto(A, '11c-cuota-simulacion'); await A.click('.dlg-b .btn');
+// la tabla de tramos se edita en ajustes: subir el tipo de cotización cambia la cuota de cada tramo y la estimada
+await ajustesAutonomo(A);
+assert.equal(await A.locator('[data-tramoc=hasta]').count(), 15);
+assert.equal(await texto(A, '.tramo [data-et=cuota-tramo]'), `cuota ${eur(F.cuotaDeTramo(esperado.ajustes.fiscal.tramosCuota[0], esperado.ajustes.fiscal))} al mes`);
+await A.fill('[data-fiscal=limiteCuota]', '250'); await A.locator('[data-fiscal=limiteCuota]').blur();
+esperado.ajustes.fiscal.limiteCuota = 250; ce = F.cuotaEstimada(esperado, anio);
+await impuestos(A);
+assert.match(await texto(A, '[data-et=cuota]'), ce.falta ? new RegExp(`Para no pasar de ${re(eur(250))} al mes te faltan ${re(eur(ce.falta))}`) : /No pasas de tu límite/);
+await foto(A, '11d-cuota-limite', true);
+await ajustesAutonomo(A);
+await A.fill('[data-fiscal=limiteCuota]', '300'); await A.locator('[data-fiscal=limiteCuota]').blur();
+esperado.ajustes.fiscal.limiteCuota = 300; ce = F.cuotaEstimada(esperado, anio);
+paso(`cuota sin tarifa plana en simulación: ${eur(ce.cuota)} al mes con ${eur(ce.mensual)} de beneficio al mes; con el límite en 250 € pide más gasto deducible`);
 paso(`tarifa plana en simulación: ${eur(r.llevas)} para la Seguridad Social frente a ${eur(r.smi)} de salario mínimo, y de dónde sale`);
 
 // Gasto

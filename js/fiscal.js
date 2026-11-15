@@ -247,7 +247,8 @@ function finPeriodo(inicio, meses) {
 /**
  * Beneficio para la Seguridad Social de un año frente al salario mínimo.
  * { anio, modo, llevas, proyeccion (a este ritmo, al acabar el año), smi, cerrado, cumple (proyección < salario mínimo),
- *   rendimiento, cuota (de dónde sale: beneficio fiscal y cuota pagada) }
+ *   rendimiento, cuota (de dónde sale: beneficio fiscal y cuota pagada), dias (días de actividad del año),
+ *   dificilEnTope (los gastos de difícil justificación ya están en su tope: un gasto más baja el beneficio entero) }
  */
 export function ritmoSS(estado, anio, hoy = hoyISO()) {
   anio = String(anio);
@@ -257,7 +258,9 @@ export function ritmoSS(estado, anio, hoy = hoyISO()) {
   const ini = a.modo === 'real' && fechaAlta.slice(0, 4) === anio ? fechaAlta : `${anio}-01-01`;
   let proyeccion = llevas;
   if (!cerrado && !futuro && hoy >= ini) proyeccion = Math.round(cent(llevas) * diasEntre(ini, `${anio}-12-31`) / diasEntre(ini, hoy)) / 100;
-  return { anio, modo: a.modo, llevas, proyeccion, smi, cerrado, futuro, cumple: proyeccion < smi, rendimiento: a.rendimiento, cuota: a.cuota };
+  const capado = cent(a.dificil) > 0 && cent(a.dificil) * (cent(llevas) > 0 ? cent(proyeccion) / cent(llevas) : 1) >= cent(fiscal.difJustMax);
+  return { anio, modo: a.modo, llevas, proyeccion, smi, cerrado, futuro, cumple: proyeccion < smi, rendimiento: a.rendimiento, cuota: a.cuota,
+    dias: diasEntre(ini, `${anio}-12-31`), dificilEnTope: capado };
 }
 /**
  * Tarifa plana: cuándo acaba y si se cumple el requisito de la prórroga. null sin fecha de alta.
@@ -282,6 +285,45 @@ export function tarifaPlana(estado, hoy = hoyISO()) {
   const avisar = fase === 'primer' && !pedida && dias <= pct(fiscal.avisoTarifaDias) ? 'fin'
     : faltaTramo && (fase === 'acabada' || dias <= pct(fiscal.avisoTarifaDias)) ? 'tramo' : null;
   return { fin1, fin2, pedida, fin, fase, dias, mesNuevo, faltaTramo, avisar, actual: ritmoSS(estado, hoy.slice(0, 4), hoy), anios };
+}
+
+// ---------- cuota según el beneficio (sin tarifa plana) ----------
+// REGLAS (fase 3, parte B):
+//  - Beneficio al mes para la Seguridad Social = beneficio del año (a este ritmo) / días de actividad del año × 30.
+//  - Tramo = el primero de la tabla cuyo «hasta» no se supera. Cuota = base mínima del tramo × tipo de cotización.
+//  - Gasto que falta para no pasar de `limiteCuota` = lo que hay que bajar el beneficio anual para caer al tramo más
+//    alto cuya cuota no pasa del límite, dividido por lo que baja el beneficio cada euro de gasto:
+//    (1 − gastos genéricos %) × (1 − difícil justificación %; si esos gastos ya están en su tope, 1). Estimación.
+
+const tramosOrdenados = (fiscal) => [...(fiscal.tramosCuota || [])].sort((x, y) => (x.hasta == null ? Infinity : x.hasta) - (y.hasta == null ? Infinity : y.hasta));
+/** Cuota al mes de un tramo: su base mínima por el tipo de cotización (euros). */
+export const cuotaDeTramo = (t, fiscal) => Math.round(cent(t.base) * pct(fiscal.tipoCotizacionPct) / 100) / 100;
+/** Tramo que corresponde a un beneficio al mes: { hasta, base, cuota }. null si la tabla está vacía. */
+export function tramoDe(fiscal, mensual) {
+  const ts = tramosOrdenados(fiscal);
+  const t = ts.find((x) => x.hasta == null || cent(mensual) <= cent(x.hasta)) || ts[ts.length - 1];
+  return t ? { hasta: t.hasta, base: pct(t.base), cuota: cuotaDeTramo(t, fiscal) } : null;
+}
+/**
+ * Cuota que tocaría sin tarifa plana con el beneficio de un año, y el gasto deducible que falta para no pasar del límite.
+ * { anio, modo, anual (beneficio para la Seguridad Social a este ritmo), dias, mensual, tramo{hasta, base, cuota}, cuota,
+ *   limite, objetivo (tramo más alto cuya cuota no pasa del límite, o null si ninguno), falta (euros de gasto deducible
+ *   en el año; 0 si ya no pasas; null si no hay tramo que valga), porEuro (lo que baja el beneficio cada euro de gasto) }
+ */
+export function cuotaEstimada(estado, anio, hoy = hoyISO()) {
+  const fiscal = estado.ajustes.fiscal, r = ritmoSS(estado, anio, hoy);
+  const anual = cent(r.proyeccion), mensual = Math.round(anual * 30 / r.dias) / 100;
+  const tramo = tramoDe(fiscal, mensual), limite = pct(fiscal.limiteCuota);
+  const validos = tramosOrdenados(fiscal).filter((t) => cuotaDeTramo(t, fiscal) <= limite);
+  const ult = validos[validos.length - 1];
+  const objetivo = ult ? { hasta: ult.hasta, base: pct(ult.base), cuota: cuotaDeTramo(ult, fiscal) } : null;
+  const porEuro = Math.round((100 - pct(fiscal.genericosSSPct)) * (r.dificilEnTope ? 100 : 100 - pct(fiscal.difJustPct))) / 1e4;
+  let falta = null;
+  if (tramo && objetivo) {
+    const tope = objetivo.hasta == null ? Infinity : Math.round(cent(objetivo.hasta) * r.dias / 30);
+    falta = tramo.cuota <= limite || anual <= tope ? 0 : Math.ceil((anual - tope) / porEuro) / 100;
+  }
+  return { anio: r.anio, modo: r.modo, anual: r.proyeccion, dias: r.dias, mensual, tramo, cuota: tramo ? tramo.cuota : 0, limite, objetivo, falta, porEuro };
 }
 
 // ---------- modelo 347 ----------
