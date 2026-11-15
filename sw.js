@@ -2,11 +2,11 @@
 // IMPORTANTE: cada vez que cambies cualquier archivo de la app, sube VERSION (aquí y en js/app.js).
 // Si no, los dispositivos seguirán usando la versión guardada.
 
-const VERSION = '1.4.0';
+const VERSION = '1.5.0';
 const CACHE = 'msf-' + VERSION;
 const ARCHIVOS = [
   './', './index.html', './manifest.webmanifest', './css/app.css',
-  './js/app.js', './js/almacen.js', './js/boveda.js', './js/copias.js', './js/cripto.js', './js/csv.js', './js/fiscal.js', './js/migracion.js', './js/modelo.js', './js/modelos.js',
+  './js/app.js', './js/almacen.js', './js/boveda.js', './js/copias.js', './js/cripto.js', './js/csv.js', './js/enlace.js', './js/fiscal.js', './js/migracion.js', './js/modelo.js', './js/modelos.js',
   './iconos/icono-180.png', './iconos/icono-192.png', './iconos/icono-512.png', './iconos/icono-maskable-512.png',
 ];
 

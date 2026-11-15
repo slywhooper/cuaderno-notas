@@ -348,6 +348,51 @@ assert.match(await texto(A, '[data-et=mes]'), new RegExp(`^ENERO ${anio} ${re(eu
 await A.click('[data-accion=imp][data-imp=resumen]');
 paso(`gráficos de ${anio}: te queda el ${Math.round(gm.total.pctQueda)} % de lo cobrado; el detalle del mes cambia al tocar el gráfico o la tabla`);
 
+// Enlace de solo lectura: otra persona ve lo mismo sin poder cambiar ni guardar nada, y la bóveda del dueño queda intacta
+await ir(A, 'mas'); await A.click('[data-accion=compartir-lectura]');
+await A.fill('.dlg [name=codigo]', '12'); await A.click('.dlg-b .btn:last-child');
+assert.match(await texto(A, '.dlg .error'), /al menos 4/);
+await A.fill('.dlg [name=codigo]', '246810'); await A.click('.dlg-b .btn:last-child');
+await A.waitForSelector('.dlg [name=enlace]');
+const enlace = await A.inputValue('.dlg [name=enlace]');
+assert.match(enlace, /^http:\/\/127\.0\.0\.1:8765\/#v1\.[A-Za-z0-9_-]+$/);
+await foto(A, '23-enlace-creado'); await A.click('.dlg-b .btn:first-child');
+const netoDueno = await heroe(A); a = F.anioFiscal(esperado, anio);
+const V = await dispositivo('V', { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });   // el móvil de otra persona, sin datos
+await V.waitForSelector('form[data-form=crear]');
+await V.goto(enlace); await V.waitForSelector('form[data-form=enlace]');                 // pegar el enlace con la app ya abierta la recarga
+await V.fill('[name=pw]', '000000'); await V.click('button[type=submit]');
+await V.waitForSelector('.error'); assert.match(await texto(V, '.error'), /código no es el de este enlace/);
+await V.fill('[name=pw]', '246810'); await V.click('button[type=submit]'); await V.waitForSelector('.barra');
+assert.match(await texto(V, '.lectura-b'), /Solo lectura/);
+assert.equal(await heroe(V), netoDueno);
+await impuestos(V); assert.equal(await texto(V, '.grande'), eur(a.neto));
+await impuestos(V, 'graficos'); assert.equal(await V.locator('svg.grafico .g-col').count(), 12);
+await foto(V, '24-solo-lectura', true);
+assert.ok(await V.locator('.fab').isHidden());
+await ir(V, 'inicio'); assert.equal(await V.locator('[data-accion=cobrar]:visible').count(), 0);
+await ir(V, 'facturas'); await V.locator('#lista-facturas .fila').first().click(); await V.waitForTimeout(200);
+assert.equal(await V.locator('.hoja').count(), 0);                                        // tocar una factura no abre su ficha
+await ir(V, 'gastos'); assert.equal(await V.locator('[data-accion=nuevo-gasto]:visible').count(), 0);
+await ir(V, 'mas'); assert.equal(await V.locator('[data-sub=copias], [data-accion=compartir-lectura]').count(), 0);
+await V.click('[data-sub=fiscal]');
+assert.equal(await V.locator('.cuerpo input:enabled, .cuerpo select:enabled').count(), 0); // todos los campos, desactivados
+await V.evaluate(() => {                                                                  // aunque alguien fuerce un campo o un botón, no cambia nada
+  const i = document.querySelector('[data-fiscal=ivaPct]'); i.disabled = false; i.value = '99'; i.dispatchEvent(new Event('change', { bubbles: true }));
+  const b = document.createElement('button'); b.dataset.accion = 'quitar-alta'; document.querySelector('.cuerpo').append(b); b.click();
+});
+await V.waitForTimeout(300);
+await impuestos(V); assert.equal(await texto(V, '.grande'), eur(a.neto)); assert.equal(await V.locator('.banda.sim:not(.lectura-b)').count(), 0);
+await V.click('[data-accion=salir-lectura]'); await V.waitForSelector('form[data-form=crear]');   // al salir no queda nada guardado: pide crear código
+const A2 = await A.context().newPage();                                                   // el dueño abre su propio enlace en su dispositivo
+await A2.goto(enlace); await A2.waitForSelector('form[data-form=enlace]');
+await A2.fill('[name=pw]', '246810'); await A2.click('button[type=submit]'); await A2.waitForSelector('.lectura-b');
+await A2.click('[data-accion=salir-lectura]'); await A2.waitForSelector('form[data-form=abrir]');
+await A2.fill('[name=pw]', '4821'); await A2.click('button[type=submit]'); await A2.waitForSelector('.barra');
+assert.equal(await heroe(A2), netoDueno);                                                 // su bóveda sigue igual
+await A2.close(); await V.context().close();
+paso(`enlace de solo lectura (${enlace.length} caracteres): se abre solo con su código, enseña el mismo neto (${netoDueno}), no deja cambiar nada y no guarda nada`);
+
 // ---------- PC ----------
 console.log('PC (B)');
 const B = await dispositivo('B', { viewport: { width: 1280, height: 800 } });

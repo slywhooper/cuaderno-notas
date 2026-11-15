@@ -246,3 +246,9 @@ input[readonly] { color: var(--suave); background: var(--panel); }
   #app[data-vista^="mas/"] .cuerpo .lista { grid-template-columns: 1fr; }
   #app[data-vista="mas/"] .cuerpo .lista { grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
 }
+
+/* Solo lectura (enlace compartido) */
+.lectura .fab { display: none; }
+.lectura .inerte { cursor: default; }
+.lectura-b .enlace { color: #cfe2ff; text-decoration: underline; font-size: inherit; margin-left: 6px; }
+.enlace-txt { font-family: var(--mono); font-size: 12px; word-break: break-all; }

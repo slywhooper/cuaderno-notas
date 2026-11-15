@@ -37,6 +37,7 @@ Documento para quien continúe el proyecto (persona u otro modelo). Léelo enter
 | `js/copias.js` | Archivo de copia cifrado y fusión entre dispositivos. |
 | `js/modelos.js` | Las cifras para presentar: casillas de los modelos 303, 130 y 390 y resumen para la renta. Solo ordena y explica lo que calcula `fiscal.js`. |
 | `js/csv.js` | Exportación a CSV de facturas y de gastos, y los tres libros registro por año (emitidas, recibidas, bienes de inversión). |
+| `js/enlace.js` | Enlace de solo lectura: reduce, comprime y cifra el estado dentro del propio enlace, y lo abre con su código. |
 | `js/app.js` | Interfaz: vistas, fichas, diálogos, eventos delegados por `data-accion`. |
 | `sw.js`, `manifest.webmanifest`, `iconos/` | Instalación y funcionamiento sin internet. |
 | `pruebas/` | `logica.mjs` (Node, sin dependencias), `e2e.mjs` (fase 1) y `e2e-autonomo.mjs` (fases 2 y 3): Playwright + Chrome, dos dispositivos. |
@@ -186,6 +187,14 @@ Fase 3, parte B (15 de noviembre de 2026; plan completo en la sección 14 del do
   Desde 1000 px de ancho el contenido va en columnas (`.cols` > `.col`, al final de `app.css`) para que cada pantalla
   quepa sin bajar; por debajo, `.cols` y `.col` son `display: contents` y el móvil queda exactamente igual. Las pestañas
   siguen abajo (decisión del usuario). Una pantalla nueva debe envolver sus bloques en `.cols`/`.col`.
+- Enlace de solo lectura (1.5.0, `enlace.js`; Más → Compartir en solo lectura): para enseñar la app a otra persona sin
+  pasarle una copia. Los datos van dentro del enlace, tras «#» (no viajan al servidor), reducidos, comprimidos y cifrados
+  con un código que el usuario dice aparte. Quien lo abre ve la app en memoria con `S.lectura` puesto. TRES BARRERAS que
+  no se pueden quitar: `persistir()` no escribe; solo se atienden las acciones de `LECTURA_OK`; los eventos `input`,
+  `change` y `submit` se ignoran. La bóveda del dispositivo ni se abre ni se crea. Una acción nueva que solo enseñe
+  datos hay que añadirla a `LECTURA_OK`; una que cambie algo, NUNCA. Un campo nuevo en los datos hay que añadirlo a
+  `reducir()` y `ampliar()`. El usuario sabe que quien tenga enlace y código lo ve todo y que un enlace enviado no se
+  puede anular. No se puede acortar más sin un servidor (unos 4.500 caracteres con todo; 2.500 con un solo año).
 - `leerNumero()` (1.2.3): «1.000» escrito sin coma se lee como mil (antes, como uno). «1.5» sigue siendo 1,5.
 
 ## Lo que falta
@@ -194,7 +203,7 @@ Fase 3, parte B (15 de noviembre de 2026; plan completo en la sección 14 del do
 explicación, resumen para la renta, material que se amortiza, gastos de difícil justificación, minoración del 130 y
 reducción por inicio de actividad.
 
-**Fase 3, parte B: hecha** (versión 1.4.0, que añade la vista de PC): tarifa plana (1.2.1), cuota según el beneficio (1.2.2), ayuda puntual
+**Fase 3, parte B: hecha** (versión 1.5.0, con la vista de PC y el enlace de solo lectura): tarifa plana (1.2.1), cuota según el beneficio (1.2.2), ayuda puntual
 (1.2.3), libros registro (1.2.4) y gráficos (1.3.0). El comparador cooperativa / autónomo NO se hace (decisión del usuario).
 
 Pendiente: probar la vista de PC en la pantalla real del usuario y ajustar lo que pida; confirmar
@@ -219,7 +228,7 @@ PLAYWRIGHT=/ruta/playwright/index.mjs CHROME=/usr/bin/google-chrome \
 ```
 
 `e2e-autonomo.mjs` no lleva cifras escritas: las calcula con `modelo.js` y `fiscal.js` y las compara con la pantalla.
-Recorre simulación, gasto, fecha de alta, impuestos reales, hucha, presentar, calendario, factura de autónomo, cobro,
+Recorre simulación, tarifa plana, cuota, ayuda, libros, gráficos, enlace de solo lectura, gasto, fecha de alta, impuestos reales, hucha, presentar, calendario, factura de autónomo, cobro,
 las casillas de los modelos una a una, material que se amortiza, copia entre dos dispositivos y vuelta a cooperativa. Las carpetas de salida contienen copias con datos: bórralas.
 
 La prueba de navegador simula un móvil y un PC: crea contraseñas, importa, crea/edita/cobra/borra, exporta e importa

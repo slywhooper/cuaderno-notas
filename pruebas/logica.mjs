@@ -9,6 +9,7 @@ import { derivarClave, cifrar, descifrar, aleatorio } from '../js/cripto.js';
 import { aCSV, gastosCSV, libroEmitidas, libroRecibidas, libroBienes } from '../js/csv.js';
 import * as F from '../js/fiscal.js';
 import * as MO from '../js/modelos.js';
+import * as EN from '../js/enlace.js';
 
 let n = 0;
 const prueba = async (nombre, fn) => { await fn(); n++; console.log('  ✓', nombre); };
@@ -569,6 +570,39 @@ await prueba('mes a mes: lo que queda y lo que se aparta de cada mes, y las suma
   assert.equal(F.mesesDelAnio(M.estadoVacio(), '2027', HOY).total.pctQueda, null);
 });
 
+console.log('Enlace de solo lectura');
+const cifras = (e, hoy) => [M.resumenPorAnio(e).map((r) => [r.anio, r.n, r.bruto, r.netoCobrado, r.dias]), ['2026', '2027'].map((a) => { const x = F.anioFiscal(e, a, hoy); return [x.modo, x.base, x.iva, x.cuota, x.rendimiento, x.neto, x.total303, x.reservaRenta, x.ayudas]; }),
+  M.vivos(e.clientes).map((c) => [c.nombre, M.textoPlazo(c.plazo)]), M.vivos(e.gastos).length, F.hucha(e, hoy).total];
+await prueba('reducir y ampliar: el estado que sale del enlace da exactamente las mismas cifras que el original', () => {
+  const E = conAyuda(ayuda('y1', '2027-03-10', 1000, false)); E.gastos.push(material('m1', '2027-03-01', 1000));
+  E.clientes.push({ id: 'c2', nombre: 'Otro', plazo: { tipo: 'mes', desde: 7, hasta: 10 }, _mod: 1, _base: 0 }, { id: 'c3', nombre: 'Borrado', _borrado: true, _mod: 2, _base: 0 });
+  E.ajustes.fiscal.presentados['2027-303-1'] = true; E.ajustes.fiscal.limiteCuota = 250;
+  const V = EN.ampliar(JSON.parse(JSON.stringify(EN.reducir(E, null, HOY))));
+  assert.deepEqual(cifras(V, HOY), cifras(E, HOY));
+  assert.deepEqual([V.ajustes.fechaAlta, V.ajustes.fiscal.limiteCuota, V.ajustes.fiscal.presentados, V.ayudas[0].cuentaSS, V.clientes.length], ['2027-01-01', 250, { '2027-303-1': true }, false, 2]);
+  assert.deepEqual(V.facturas.map((f) => [f.estado, f.fechaFactura, f.neto, f.diasSS, f.ivaPct ?? null, f.retPct ?? null]), E.facturas.map((f) => [f.estado, f.fechaFactura, f.neto, f.diasSS, f.ivaPct ?? null, f.retPct ?? null]));
+  assert.ok(!JSON.stringify(EN.reducir(E)).includes('Borrado'));                 // lo borrado no viaja
+});
+await prueba('solo un año: viajan sus facturas, sus gastos y el material anterior que aún se amortiza', () => {
+  const E = estadoAutonomo(); E.gastos.push(material('m0', '2027-03-01', 1000)); E.facturas.push(fac('b1', '2028-02-01', 'cobrada', 700, { ivaPct: 21, retPct: 7 })); E.gastos.push(gas('g8', '2028-01-05', 40, 8.4, 100, 100));
+  const V = EN.ampliar(EN.reducir(E, '2028', '2028-06-01'));
+  assert.deepEqual([V.facturas.length, V.gastos.map((g) => g.fecha)], [1, ['2027-03-01', '2028-01-05']]);
+  assert.equal(F.anioFiscal(V, '2028', '2028-06-01').rendimiento, F.anioFiscal(E, '2028', '2028-06-01').rendimiento);
+});
+await prueba('enlace cifrado: se abre con su código y con ningún otro; cortado o alterado no se abre', async () => {
+  const url = await EN.crearEnlace(A, '246810', { base: 'https://ejemplo.test/app/', hoy: HOY });
+  const hash = url.slice(url.indexOf('#'));
+  assert.ok(url.startsWith('https://ejemplo.test/app/#v1.') && /^#v1\.[A-Za-z0-9_-]+$/.test(hash));   // solo letras, números, - y _: no se rompe al pegarlo
+  assert.ok(EN.esEnlace(hash) && !EN.esEnlace('') && !EN.esEnlace('#otra-cosa') && !EN.esEnlace('#v1.corto'));
+  for (const t of ['Cliente', 'Operador', '2027-02-10', '1000']) assert.ok(!hash.includes(t) && !atob(hash.slice(4).replace(/-/g, '+').replace(/_/g, '/')).includes(t)); // nada legible
+  const r = await EN.abrirEnlace(hash, '246810');
+  assert.deepEqual([r.fecha, r.anio, cifras(r.estado, HOY)], [HOY, null, cifras(A, HOY)]);
+  await assert.rejects(EN.abrirEnlace(hash, '246811'));
+  await assert.rejects(EN.abrirEnlace(hash.slice(0, -6), '246810'));
+  await assert.rejects(EN.abrirEnlace(hash.slice(0, 60) + (hash[60] === 'A' ? 'B' : 'A') + hash.slice(61), '246810'));
+  assert.notEqual(await EN.crearEnlace(A, '246810', { hoy: HOY }), await EN.crearEnlace(A, '246810', { hoy: HOY }));   // cada enlace lleva su propia sal
+});
+
 const ruta = process.argv[2];
 if (ruta) {
   console.log('Copia real: ' + ruta);
@@ -595,6 +629,15 @@ if (ruta) {
       assert.equal(a.base, emitido); assert.equal(a.modo, 'simulacion');
       console.log(`   simulación ${x.anio}: facturado ${a.base} · IVA ${a.iva} · retención ${a.retencion} · cuota ${a.cuota} · neto ${a.neto} · reserva renta ${a.reservaRenta}`);
     }
+  });
+  await prueba('enlace de solo lectura con la copia real: las cifras de quien lo abre son las de la app', async () => {
+    const real = M.completar(structuredClone(r.estado)), hoy = M.hoyISO();
+    const todo = await EN.crearEnlace(real, '135790'), unAnio = await EN.crearEnlace(real, '135790', { anio: hoy.slice(0, 4) });
+    const v = (await EN.abrirEnlace(todo, '135790')).estado;
+    assert.deepEqual(M.resumenPorAnio(v).map((x) => [x.anio, x.n, x.bruto, x.netoCobrado, x.dias, x.brutoSinNeto]), M.resumenPorAnio(real).map((x) => [x.anio, x.n, x.bruto, x.netoCobrado, x.dias, x.brutoSinNeto]));
+    for (const a of M.anios(real)) assert.deepEqual(F.anioFiscal(v, a), F.anioFiscal(real, a));
+    assert.deepEqual(M.vivos(v.facturas).map((f) => M.cobroPrevisto(f, v.clientes.find((c) => c.id === f.clienteId))), M.vivos(real.facturas).map((f) => M.cobroPrevisto(f, real.clientes.find((c) => c.id === f.clienteId))));
+    console.log(`   enlace con todo: ${todo.length} caracteres · solo ${hoy.slice(0, 4)}: ${unAnio.length} caracteres`);
   });
 }
 console.log(`\n${n} pruebas correctas`);

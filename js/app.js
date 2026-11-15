@@ -16,8 +16,9 @@ import { migrarCopiaV2, esCopiaAntigua } from './migracion.js';
 import * as F from './fiscal.js';
 import * as MO from './modelos.js';
 import { aCSV, gastosCSV, libroEmitidas, libroRecibidas, libroBienes } from './csv.js';
+import * as EN from './enlace.js';
 
-const VERSION = '1.4.0'; // cambiar también en sw.js
+const VERSION = '1.5.0'; // cambiar también en sw.js
 const MIN_CLAVE = 4; // decisión del usuario: código corto tipo PIN (él sabe que una copia así se puede forzar)
 
 const S = {
@@ -28,6 +29,7 @@ const S = {
   f: { q: '', cliente: '', estado: '' },      // filtros de la lista de facturas
   imp: 'resumen', trim: 0, modelo: '303', mes: 0,     // apartado de Impuestos, trimestre elegido (0 = el actual) y modelo
   hoja: null,                                 // ficha abierta: { tipo, datos, ... }
+  lectura: null,                              // vista de solo lectura abierta desde un enlace: { fecha, anio } (ver enlace.js)
   instantaneas: [],
 };
 
@@ -55,7 +57,11 @@ const libroAnio = () => S.libroAnio || (S.anio === 'todo' ? M.hoyISO().slice(0, 
 const clientes = () => M.vivos(S.estado.clientes).sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
 const mapaClientes = () => new Map(S.estado.clientes.map((c) => [c.id, c]));
 const nombreCliente = (id) => mapaClientes().get(id)?.nombre || 'Sin cliente';
-const persistir = () => B.guardarEstado(S.estado);
+// SOLO LECTURA (enlace compartido, ver enlace.js). Tres barreras para que no se pueda cambiar ni guardar nada:
+//  1) persistir() no escribe; 2) solo se atienden las acciones de LECTURA_OK; 3) los cambios en campos se ignoran.
+// Además, aplicarLectura() esconde los botones que no valen y desactiva los campos. La bóveda del dispositivo ni se abre.
+const LECTURA_OK = new Set(['ir', 'sub', 'anio', 'mes', 'ver-anio', 'imp', 'ir-imp', 'trim', 'modelo', 'detalle-ss', 'detalle-cuota', 'detalle-hucha', 'detalle-comparativa', 'salir-lectura']);
+const persistir = () => (S.lectura ? Promise.resolve() : B.guardarEstado(S.estado));
 const fiscal = () => S.estado.ajustes.fiscal;
 const gastos = () => M.vivos(S.estado.gastos);
 const redondo = (n) => Math.round(n * 100) / 100;
@@ -173,6 +179,19 @@ function pantallaCrear(error = '', numerico = true) {
     <button class="btn" type="submit">Crear y entrar</button></form>`;
 }
 
+/** Pantalla de quien abre un enlace de solo lectura: pide el código del enlace. No toca la bóveda de este dispositivo. */
+function pantallaEnlace(error = '') {
+  $('#app').innerHTML = `<form class="puerta" data-form="enlace" novalidate>
+    <div class="logo" aria-hidden="true"></div><h1>Mis servicios y facturas</h1>
+    <p>Te han pasado una vista de solo lectura. Escribe el código que te han dado para verla.</p>
+    ${campoClave('pw', 'Código del enlace', 'off', true)}
+    ${botonTeclado(true)}
+    ${error ? `<p class="error" role="alert">${esc(error)}</p>` : ''}
+    <button class="btn" type="submit">Ver</button>
+    <p class="pie">Solo podrás mirar: no se puede cambiar nada y en este dispositivo no se guarda ningún dato.</p></form>`;
+  $('input[name=pw]').focus();
+}
+
 function pantallaDesbloqueo(error = '') {
   const numerico = B.esPin();
   $('#app').innerHTML = `<form class="puerta" data-form="abrir" novalidate>
@@ -192,6 +211,16 @@ async function entrar(estado) {
 }
 
 const FORMULARIOS = {
+  async enlace(f) {
+    const boton = f.querySelector('button[type=submit]'); boton.disabled = true; boton.textContent = 'Abriendo…';
+    let r;
+    try { r = await EN.abrirEnlace(location.hash, f.pw.value); }
+    catch { return pantallaEnlace('El código no es el de este enlace, o el enlace ha llegado cortado. Pide que te lo manden otra vez.'); }
+    S.lectura = { fecha: r.fecha, anio: r.anio }; S.estado = r.estado;
+    S.local = { ultimaCopia: Date.now() }; S.instantaneas = [];
+    S.vista = 'inicio'; S.sub = null; if (r.anio) S.anio = r.anio;
+    render();
+  },
   async crear(f) {
     const pw = f.pw.value, pw2 = f.pw2.value;
     const numerico = f.pw.hasAttribute('inputmode');
@@ -377,9 +406,9 @@ const VISTAS = {
       ${item('clientes', 'Clientes', 'Nombres y plazos de cobro')}
       ${item('ayudas', 'Ayudas y subvenciones', 'Una ayuda puntual que cuenta como ingreso para la renta')}
       ${item('fiscal', 'Ajustes de autónomo', 'Fecha de alta, epígrafe, IVA, IRPF, cuota y categorías de gasto')}
-      ${item('copias', 'Copias de seguridad', 'Exportar, importar, CSV')}
-      ${item('seguridad', 'Código de acceso', 'Cambiar el código, cerrar la app con código')}
-      </div><p class="pie">Versión ${VERSION} · Los datos están cifrados y solo en este dispositivo.</p>` };
+      ${S.lectura ? '' : item('copias', 'Copias de seguridad', 'Exportar, importar, CSV') + `<button class="fila menu" data-accion="compartir-lectura"><div class="fila-a"><div class="fila-t">Compartir en solo lectura</div><div class="fila-s">Un enlace para que otra persona vea la app con tus datos, sin poder cambiar nada</div></div><div class="flecha" aria-hidden="true">›</div></button>`
+        + item('seguridad', 'Código de acceso', 'Cambiar el código, cerrar la app con código')}
+      </div><p class="pie">Versión ${VERSION} · ${S.lectura ? 'Vista de solo lectura: aquí no se guarda nada.' : 'Los datos están cifrados y solo en este dispositivo.'}</p>` };
   },
 };
 
@@ -776,12 +805,24 @@ function render() {
   const v = VISTAS[S.vista]();
   $('#app').dataset.vista = S.vista + '/' + (S.sub || '');
   $('#app').innerHTML = `<header class="cab"><h1>${esc(v.titulo)}</h1>${v.cab || ''}</header>
-    <main class="cuerpo">${v.html}</main>${barra()}
+    <main class="cuerpo">${S.lectura ? `<p class="banda sim lectura-b"><b>Solo lectura.</b> Datos del ${fechaCorta(S.lectura.fecha)}${S.lectura.anio ? ` · solo ${S.lectura.anio}` : ''}. No se puede cambiar nada. <button class="enlace" data-accion="salir-lectura">Salir</button></p>` : ''}${v.html}</main>${barra()}
     <input type="file" id="archivo" accept=".json,application/json" hidden>`;
+  if (S.lectura) aplicarLectura();
   window.scrollTo(0, desplazamiento);
 }
 
 // ---------- hojas (fichas que suben desde abajo) ----------
+/** En solo lectura: esconde los botones que cambiarían algo, deja inertes las filas y desactiva los campos (menos los filtros). */
+function aplicarLectura() {
+  const app = $('#app');
+  app.classList.add('lectura');
+  for (const el of app.querySelectorAll('[data-accion]')) {
+    if (LECTURA_OK.has(el.dataset.accion)) continue;
+    if (el.matches('.fila, .anio-fila')) { el.removeAttribute('role'); el.removeAttribute('tabindex'); el.classList.add('inerte'); } else el.hidden = true;
+  }
+  for (const el of app.querySelectorAll('.cuerpo input:not([data-filtro]), .cuerpo select:not([data-filtro]), .cuerpo textarea')) el.disabled = true;
+}
+
 function abrirHoja(html) {
   $('#capa').innerHTML = `<div class="velo" data-accion="cerrar-hoja"></div><section class="hoja" role="dialog" aria-modal="true">${html}</section>`;
   document.documentElement.classList.add('con-hoja');
@@ -1227,6 +1268,32 @@ const ACCIONES = {
   'abrir-factura'(el) { hojaFactura(el.dataset.id); },
   cobrar(el) { cobrar(el.dataset.id); },
   'cerrar-hoja'() { cerrarHoja(); },
+  'salir-lectura'() { history.replaceState(null, '', location.pathname + location.search); location.reload(); },
+  /** Crea un enlace de solo lectura con los datos dentro, cifrados con un código (ver enlace.js). */
+  async 'compartir-lectura'(el, error = '', previo = null) {
+    const anioAhora = S.anio === 'todo' ? M.hoyISO().slice(0, 4) : S.anio;
+    const v = previo || { codigo: String(crypto.getRandomValues(new Uint32Array(1))[0] % 1000000).padStart(6, '0'), que: 'todo' };
+    const r = await dialogo({ titulo: 'Compartir en solo lectura', cuerpo: `
+        <p>Crea un enlace para que otra persona vea la app con tus datos. Podrá mirar todo, pero no cambiar nada, y en su dispositivo no se guarda ningún dato.</p>
+        <label>Código para abrirlo (díselo aparte, no en el mismo mensaje)<input name="codigo" inputmode="numeric" autocomplete="off" value="${esc(v.codigo)}"></label>
+        <label>Qué incluir<select name="que"><option value="todo" ${v.que === 'todo' ? 'selected' : ''}>Todo (enlace más largo)</option><option value="${anioAhora}" ${v.que !== 'todo' ? 'selected' : ''}>Solo ${anioAhora} (enlace más corto)</option></select></label>
+        <p class="ojo">Tus datos van dentro del enlace, cifrados con ese código. Quien tenga el enlace y el código lo ve todo, y un enlace ya enviado no se puede anular. Es una foto de hoy: si cambias algo, tendrás que crear otro.</p>
+        ${error ? `<p class="error">${esc(error)}</p>` : ''}`,
+      botones: [{ texto: 'Cancelar', valor: false, clase: 'sec' }, { texto: 'Crear enlace', valor: true }] });
+    if (!r.valor) return;
+    const codigo = r.datos.codigo.trim(), que = r.datos.que;
+    if (codigo.length < MIN_CLAVE) return ACCIONES['compartir-lectura'](el, `El código necesita al menos ${MIN_CLAVE} caracteres.`, { codigo, que });
+    aviso('Creando el enlace…');
+    const url = await EN.crearEnlace(S.estado, codigo, { anio: que === 'todo' ? null : que, base: location.origin + location.pathname });
+    const puedeCompartir = typeof navigator.share === 'function';
+    const s = await dialogo({ titulo: 'Enlace creado', cuerpo: `
+        <label>Enlace (${url.length.toLocaleString('es-ES')} caracteres)<textarea name="enlace" class="enlace-txt" rows="4" readonly>${esc(url)}</textarea></label>
+        ${kv('Código para abrirlo', `<b>${esc(codigo)}</b>`)}
+        <p class="pie">Mándale el enlace y dile el código por otro lado. Si al tocarlo en WhatsApp no se abre entero, que lo copie y lo pegue en el navegador, o mándaselo por correo.</p>`,
+      botones: [{ texto: 'Cerrar', valor: false, clase: 'sec' }, { texto: 'Copiar', valor: 'copiar', clase: puedeCompartir ? 'sec' : '' }, ...(puedeCompartir ? [{ texto: 'Compartir', valor: 'compartir' }] : [])] });
+    if (s.valor === 'copiar') { try { await navigator.clipboard.writeText(url); aviso('Enlace copiado'); } catch { aviso('No se ha podido copiar: selecciónalo y cópialo a mano'); return ACCIONES['compartir-lectura'](el, '', { codigo, que }); } }
+    if (s.valor === 'compartir') { try { await navigator.share({ title: 'Mis servicios y facturas (solo lectura)', url }); } catch { /* cancelado */ } }
+  },
   'add-servicio'() {
     const s = S.hoja.datos.servicios, ult = s[s.length - 1];
     s.push({ evento: '', mod: ult?.mod || '', fecha: ult?.fecha || M.hoyISO(), dias: 1, importe: null });
@@ -1384,6 +1451,7 @@ const fallo = (e) => { console.error(e); aviso('Algo ha fallado: ' + (e && e.mes
 document.addEventListener('click', (e) => {
   const el = e.target.closest('[data-accion]');
   if (!el || el.disabled) return;
+  if (S.lectura && !LECTURA_OK.has(el.dataset.accion)) { if (el.matches('button')) aviso('Vista de solo lectura'); return; }
   const accion = ACCIONES[el.dataset.accion];
   if (accion) Promise.resolve().then(() => accion(el)).catch(fallo);
 });
@@ -1395,6 +1463,7 @@ document.addEventListener('keydown', (e) => {
 
 document.addEventListener('submit', (e) => {
   e.preventDefault();
+  if (S.lectura) return;                                            // solo lectura: no se envía ningún formulario
   const f = FORMULARIOS[e.target.dataset.form];
   if (f) Promise.resolve().then(() => f(e.target)).catch(fallo);
 });
@@ -1408,6 +1477,7 @@ function valorDe(el) {
 
 document.addEventListener('input', (e) => {
   const el = e.target, h = S.hoja;
+  if (S.lectura && !el.dataset.filtro) return;                      // solo lectura: lo único que se puede escribir son los filtros
   if (h && el.dataset.campo) {
     h.datos[el.dataset.campo] = valorDe(el);
     if (h.tipo === 'factura') ajustarHojaFactura(); else if (h.tipo === 'cliente') ajustarHojaCliente(); else if (h.tipo === 'gasto') ajustarHojaGasto(el.dataset.campo);
@@ -1422,6 +1492,7 @@ document.addEventListener('input', (e) => {
 
 document.addEventListener('change', (e) => {
   const el = e.target;
+  if (S.lectura) return;                                            // solo lectura: ningún cambio de ajustes ni de archivos
   if (el.id === 'archivo' && el.files[0]) importarArchivo(el.files[0]).catch(fallo);
   else if (el.dataset.eleccion) S.hoja.elecciones[el.dataset.eleccion] = el.checked ? 'archivo' : 'local';
   else if (el.dataset.eleccionRadio) S.hoja.elecciones[el.dataset.eleccionRadio] = el.value;
@@ -1470,6 +1541,9 @@ async function arrancar() {
     });
     navigator.serviceWorker.register('./sw.js').catch(() => {});
   }
+  // Si se pega un enlace de solo lectura con la app ya abierta en esta pestaña, solo cambia lo que va tras «#»: se recarga.
+  window.addEventListener('hashchange', () => { if (EN.esEnlace(location.hash)) location.reload(); });
+  if (EN.esEnlace(location.hash)) return pantallaEnlace();          // enlace de solo lectura: no se abre ni se crea la bóveda
   try { if (await B.existe()) pantallaDesbloqueo(); else pantallaCrear(); }
   catch (e) { $('#app').innerHTML = `<div class="puerta"><h1>No se puede abrir</h1><p>Este navegador no deja guardar datos (¿modo privado?).</p><p class="error">${esc(e && e.message)}</p></div>`; }
 }
