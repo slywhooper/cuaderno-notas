@@ -397,6 +397,45 @@ await prueba('resumen para la renta: conceptos de la actividad, lo pagado a cuen
   A.ajustes.fiscal.reduccionInicio = false;
 });
 
+console.log('Fase 3B: tarifa plana');
+await prueba('beneficio para la Seguridad Social: beneficio fiscal + cuota, menos el 7 %', () => {
+  // 614,80 de beneficio + 531,84 de cuota = 1.146,64; menos el 7 % = 1.066,38
+  assert.equal(F.beneficioSS(F.anioFiscal(A, '2027', HOY), A.ajustes.fiscal), 1066.38);
+  assert.equal(F.beneficioSS({ rendimiento: 10000, cuota: 1063.68 }, { genericosSSPct: 7 }), 10289.22);
+  assert.equal(F.beneficioSS({ rendimiento: -500, cuota: 100 }, { genericosSSPct: 7 }), -400); // en pérdidas no hay descuento
+});
+await prueba('a este ritmo: lo que llevas repartido por los días pasados y alargado hasta fin de año', () => {
+  const r = F.ritmoSS(A, '2027', HOY);
+  // del 1 de enero al 15 de junio van 166 días de 365: 1.066,38 × 365 / 166 = 2.344,75
+  assert.deepEqual([r.llevas, r.proyeccion, r.smi, r.cumple, r.cerrado], [1066.38, 2344.75, 17094, true, false]);
+  const c = F.ritmoSS(A, '2027', '2028-03-01');
+  assert.equal(c.cerrado, true); assert.equal(c.proyeccion, c.llevas);   // año cerrado: la cifra es la final
+  const caro = structuredClone(A); caro.ajustes.fiscal.smiAnual = 2000;
+  assert.equal(F.ritmoSS(caro, '2027', HOY).cumple, false);
+});
+await prueba('tarifa plana: 12 meses naturales completos, prórroga, aviso antes de que acabe y aviso del tramo de cuota', () => {
+  assert.equal(F.tarifaPlana(M.estadoVacio(), HOY), null);                 // sin fecha de alta no hay tarifa plana
+  let t = F.tarifaPlana(A, HOY);                                          // alta el 1 de enero de 2027
+  assert.deepEqual([t.fin1, t.fin2, t.fin, t.fase, t.dias, t.mesNuevo, t.faltaTramo, t.avisar], ['2027-12-31', '2028-12-31', '2027-12-31', 'primer', 199, '2028-01', true, null]);
+  assert.deepEqual(t.anios.map((r) => [r.anio, r.futuro]), [['2028', true]]);
+  assert.equal(F.tarifaPlana(A, '2027-11-15').avisar, 'fin');             // faltan 46 días y no la has pedido
+  const pedida = structuredClone(A); pedida.ajustes.fiscal.prorrogaPedida = true;
+  t = F.tarifaPlana(pedida, '2027-11-15');
+  assert.deepEqual([t.fin, t.fase, t.mesNuevo, t.avisar], ['2028-12-31', 'primer', '2029-01', null]);
+  assert.equal(F.tarifaPlana(pedida, '2028-06-01').fase, 'prorroga');
+  assert.deepEqual([F.tarifaPlana(A, '2028-01-10').fase, F.tarifaPlana(A, '2028-01-10').avisar], ['acabada', 'tramo']);
+  const conTramo = structuredClone(A); conTramo.ajustes.fiscal.cuotas.push({ desde: '2028-01', importe: 300 });
+  assert.equal(F.tarifaPlana(conTramo, '2028-01-10').avisar, null);       // con la cuota nueva apuntada ya no avisa
+  const medio = structuredClone(A); medio.ajustes.fechaAlta = '2027-02-15'; // alta a mitad de mes: febrero va aparte
+  t = F.tarifaPlana(medio, HOY);
+  assert.deepEqual([t.fin1, t.fin2, t.anios.map((r) => r.anio)], ['2028-02-29', '2029-02-28', ['2028', '2029']]);
+});
+await prueba('los ajustes nuevos de la tarifa plana se añaden a un estado guardado con la versión anterior', () => {
+  const viejo = structuredClone(A); for (const k of ['tarifaPlanaMeses', 'prorrogaMeses', 'smiAnual', 'genericosSSPct', 'prorrogaPedida', 'avisoTarifaDias']) delete viejo.ajustes.fiscal[k];
+  const f = M.completar(viejo).ajustes.fiscal;
+  assert.deepEqual([f.tarifaPlanaMeses, f.prorrogaMeses, f.smiAnual, f.genericosSSPct, f.prorrogaPedida, f.avisoTarifaDias], [12, 12, 17094, 7, false, 60]);
+});
+
 const ruta = process.argv[2];
 if (ruta) {
   console.log('Copia real: ' + ruta);

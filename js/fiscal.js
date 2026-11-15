@@ -224,6 +224,66 @@ export function anioFiscal(estado, anio, hoy = hoyISO(), opciones = {}) {
   return out;
 }
 
+// ---------- tarifa plana ----------
+// REGLAS (fase 3, parte B):
+//  - La tarifa plana dura los meses naturales completos siguientes al alta (12 de partida): con alta el día 1 ese
+//    mes ya es completo; con alta a mitad de mes, ese mes va aparte y se cuentan los 12 siguientes.
+//  - La prórroga (otros 12) hay que pedirla ANTES de que acabe el primer periodo, y solo vale si el beneficio de
+//    CADA año natural que toca es inferior al salario mínimo anual. La app no cambia la cuota sola: los tramos de
+//    cuota los pone el usuario.
+//  - El beneficio que mira la Seguridad Social = beneficio fiscal + cuota pagada, menos el % de gastos genéricos.
+//  - «A este ritmo» = lo que llevas × días de actividad del año / días transcurridos. Es una estimación.
+
+/** Beneficio del año como lo mira la Seguridad Social (euros). `a` es el resultado de anioFiscal(). */
+export function beneficioSS(a, fiscal) {
+  const x = cent(a.rendimiento) + cent(a.cuota);
+  return Math.round(x > 0 ? x * (1 - pct(fiscal.genericosSSPct) / 100) : x) / 100;
+}
+/** Último día de un periodo de `meses` meses naturales completos que empieza en `inicio`. */
+function finPeriodo(inicio, meses) {
+  const [a, m, d] = inicio.split('-').map(Number);
+  return fechaISO(new Date(a, m - 1 + meses + (d === 1 ? 0 : 1), 0));
+}
+/**
+ * Beneficio para la Seguridad Social de un año frente al salario mínimo.
+ * { anio, modo, llevas, proyeccion (a este ritmo, al acabar el año), smi, cerrado, cumple (proyección < salario mínimo),
+ *   rendimiento, cuota (de dónde sale: beneficio fiscal y cuota pagada) }
+ */
+export function ritmoSS(estado, anio, hoy = hoyISO()) {
+  anio = String(anio);
+  const { fiscal, fechaAlta } = estado.ajustes, a = anioFiscal(estado, anio, hoy);
+  const llevas = beneficioSS(a, fiscal), smi = pct(fiscal.smiAnual);
+  const cerrado = anio < hoy.slice(0, 4), futuro = anio > hoy.slice(0, 4);
+  const ini = a.modo === 'real' && fechaAlta.slice(0, 4) === anio ? fechaAlta : `${anio}-01-01`;
+  let proyeccion = llevas;
+  if (!cerrado && !futuro && hoy >= ini) proyeccion = Math.round(cent(llevas) * diasEntre(ini, `${anio}-12-31`) / diasEntre(ini, hoy)) / 100;
+  return { anio, modo: a.modo, llevas, proyeccion, smi, cerrado, futuro, cumple: proyeccion < smi, rendimiento: a.rendimiento, cuota: a.cuota };
+}
+/**
+ * Tarifa plana: cuándo acaba y si se cumple el requisito de la prórroga. null sin fecha de alta.
+ * { fin1, fin2, pedida, fin (el que vale), fase: 'primer'|'prorroga'|'acabada', dias (hasta `fin`),
+ *   mesNuevo ('AAAA-MM' del primer mes ya sin tarifa plana), faltaTramo (no hay tramo de cuota desde ese mes),
+ *   avisar: 'fin' (acaba pronto y no has pedido la prórroga) | 'tramo' (ha acabado y falta la cuota nueva) | null,
+ *   actual: ritmoSS del año en curso, anios: ritmoSS de cada año natural que toca la prórroga }
+ */
+export function tarifaPlana(estado, hoy = hoyISO()) {
+  const { fiscal, fechaAlta } = estado.ajustes;
+  if (!fechaAlta) return null;
+  const fin1 = finPeriodo(fechaAlta, pct(fiscal.tarifaPlanaMeses));
+  const sig = (iso) => { const [a, m, d] = iso.split('-').map(Number); return fechaISO(new Date(a, m - 1, d + 1)); };
+  const fin2 = finPeriodo(sig(fin1), pct(fiscal.prorrogaMeses));
+  const pedida = !!fiscal.prorrogaPedida, fin = pedida ? fin2 : fin1;
+  const fase = hoy <= fin1 ? 'primer' : pedida && hoy <= fin2 ? 'prorroga' : 'acabada';
+  const mesNuevo = sig(fin).slice(0, 7);
+  const faltaTramo = !(fiscal.cuotas || []).some((t) => (t.desde || '') >= mesNuevo);
+  const dias = diasEntre(hoy, fin) - 1;
+  const anios = [];
+  for (let y = Number(sig(fin1).slice(0, 4)); y <= Number(fin2.slice(0, 4)); y++) anios.push(ritmoSS(estado, y, hoy));
+  const avisar = fase === 'primer' && !pedida && dias <= pct(fiscal.avisoTarifaDias) ? 'fin'
+    : faltaTramo && (fase === 'acabada' || dias <= pct(fiscal.avisoTarifaDias)) ? 'tramo' : null;
+  return { fin1, fin2, pedida, fin, fase, dias, mesNuevo, faltaTramo, avisar, actual: ritmoSS(estado, hoy.slice(0, 4), hoy), anios };
+}
+
 // ---------- modelo 347 ----------
 /** Clientes con más del umbral anual (base + IVA) en facturas SIN retención: los que irían en el modelo 347. */
 export function clientes347(estado, anio) {

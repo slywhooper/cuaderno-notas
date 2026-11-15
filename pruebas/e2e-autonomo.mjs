@@ -82,6 +82,19 @@ assert.equal(await A.locator('.fila.plazo').count(), 11);
 assert.equal(await A.locator('[data-accion=presentar]').count(), 0); // en simulación no se marca nada
 paso(`simulación ${anio}: neto ${eur(a.neto)} de ${eur(a.base)}, trimestres y calendario; el inicio sigue en ${netoCooperativa}`);
 
+// Tarifa plana en simulación (fase 3B): el beneficio para la Seguridad Social frente al salario mínimo
+const re = (t) => t.replace(/[.$?()]/g, '\\$&');
+let r = F.ritmoSS(esperado, anio);
+await impuestos(A);
+assert.match(await texto(A, '[data-et=tarifa]'), new RegExp(`Beneficio para la Seguridad Social · ${anio} ${re(eur(r.llevas))}`));
+assert.match(await texto(A, '[data-et=tarifa]'), new RegExp(`Salario mínimo al año ${re(eur(r.smi))}`));
+assert.match(await texto(A, '[data-et=tarifa]'), r.cumple ? /podrías pedir la prórroga/ : /sin prórroga/);
+assert.equal(await A.locator('[data-accion=prorroga]').count(), 0);  // en simulación no hay nada que marcar
+await A.click('[data-accion=detalle-ss]');
+assert.match(await texto(A, '.dlg'), new RegExp(`Beneficio para Hacienda ${re(eur(r.rendimiento))}.*Cuota de autónomos pagada ${re(eur(r.cuota))}.*Beneficio para la Seguridad Social ${re(eur(r.llevas))}`));
+await foto(A, '11b-tarifa-simulacion'); await A.click('.dlg-b .btn');
+paso(`tarifa plana en simulación: ${eur(r.llevas)} para la Seguridad Social frente a ${eur(r.smi)} de salario mínimo, y de dónde sale`);
+
 // Gasto
 await ir(A, 'gastos'); await A.click('[data-accion=nuevo-gasto]'); await A.waitForSelector('.hoja');
 await A.click('.hoja-pie button[type=submit]');
@@ -144,6 +157,28 @@ assert.ok(txtIcs.startsWith('BEGIN:VCALENDAR') && txtIcs.includes('SUMMARY:Hacie
 await A.click(`[data-accion=presentar][data-id="${anio}-303-4"]`); await A.waitForSelector(`[data-id="${anio}-303-4"].sec`);
 delete esperado.ajustes.fiscal.presentados[`${anio}-303-4`];
 paso(`impuestos reales: neto ${eur(a.neto)}, hucha ${eur(F.hucha(esperado).total)}; marcar el 303 como presentado la baja y sale del archivo de calendario`);
+
+// Tarifa plana real (fase 3B): cuándo acaba, marcar la prórroga y el aviso del tramo de cuota
+const fCorta = (iso) => { const [y, m, d] = iso.split('-').map(Number); return limpio(new Intl.DateTimeFormat('es-ES', { day: 'numeric', month: 'short', year: '2-digit' }).format(new Date(y, m - 1, d))); };
+let tp = F.tarifaPlana(esperado); r = tp.actual;
+await impuestos(A);
+assert.match(await texto(A, '[data-et=tarifa]'), new RegExp(`Acaba el ${re(fCorta(tp.fin1))}`));
+assert.match(await texto(A, '[data-et=tarifa]'), new RegExp(`Beneficio para la Seguridad Social · ${anio} · llevas ${re(eur(r.llevas))}`));
+await A.click('[data-accion=prorroga]'); await A.waitForSelector('[data-accion=prorroga]:not(.sec)');
+assert.match(await texto(A, '[data-et=tarifa]'), new RegExp(`Hasta el ${re(fCorta(tp.fin2))} con la prórroga.*Prórroga pedida`));
+await foto(A, '19b-tarifa-real', true);
+await A.click('[data-accion=prorroga]'); await A.waitForSelector('[data-accion=prorroga].sec');
+assert.equal(await A.locator('.banda', { hasText: 'tarifa plana' }).count(), 0); // falta mucho para que acabe: Inicio no avisa
+await ajustesAutonomo(A);
+await A.fill('[data-fiscal=avisoTarifaDias]', '900'); await A.locator('[data-fiscal=avisoTarifaDias]').blur();
+await ir(A, 'inicio');
+assert.match(await texto(A, '.banda:has-text("tarifa plana")'), new RegExp(`La tarifa plana acaba el ${re(fCorta(tp.fin1))}`));
+await foto(A, '19c-inicio-aviso-tarifa');
+await ajustesAutonomo(A);
+await A.fill('[data-fiscal=avisoTarifaDias]', '60'); await A.locator('[data-fiscal=avisoTarifaDias]').blur();
+await ir(A, 'inicio');
+assert.equal(await A.locator('.banda', { hasText: 'tarifa plana' }).count(), 0);
+paso(`tarifa plana real: acaba el ${fCorta(tp.fin1)}, la prórroga se marca y se desmarca, y el aviso de Inicio sale con la antelación de ajustes`);
 
 // Factura de autónomo: 1.000 € -> IVA 210, retención 70, entran 1.140, neto 930
 await A.click('.fab'); await A.waitForSelector('.hoja');

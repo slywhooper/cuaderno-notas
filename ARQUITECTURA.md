@@ -142,15 +142,27 @@ Fase 3, parte A (13 de noviembre de 2026):
 - Los números de casilla están solo en `js/modelos.js`. En pantalla se avisa de que manda el nombre, no el número.
 - La reducción por inicio de actividad está desactivada de partida y solo sale en el resumen de la renta.
 
+Fase 3, parte B (15 de noviembre de 2026; plan completo en la sección 14 del documento del proyecto):
+
+- Tarifa plana (1.2.1, `tarifaPlana()` y `ritmoSS()` en `fiscal.js`): dura los meses naturales completos siguientes al
+  alta (con alta el día 1, ese mes ya cuenta). La prórroga se pide antes de que acabe el primer periodo y exige que el
+  beneficio de cada año natural que toca quede por debajo del salario mínimo (`smiAnual`). El usuario marca «He pedido
+  la prórroga» (`prorrogaPedida`). La app NO cambia la cuota sola: los tramos los pone el usuario y la app avisa si
+  falta el del primer mes sin tarifa plana.
+- Beneficio para la Seguridad Social (`beneficioSS()`) = beneficio fiscal + cuota pagada, menos `genericosSSPct` (7 %).
+  Es el que se compara con el salario mínimo y, en el punto 4, con los tramos de cuota. «A este ritmo» = lo que llevas
+  × días de actividad del año / días transcurridos.
+
 ## Lo que falta
 
-**Fases 1 y 2 y fase 3 parte A: hechas** (versión 1.2.0). La parte A: casillas de los modelos 303, 130 y 390 con
+**Fases 1 y 2 y fase 3 parte A: hechas** (desde la versión 1.2.0). La parte A: casillas de los modelos 303, 130 y 390 con
 explicación, resumen para la renta, material que se amortiza, gastos de difícil justificación, minoración del 130 y
 reducción por inicio de actividad.
 
-**Fase 3, parte B (pendiente):** comparador cooperativa / autónomo; gráficos mes a mes; tarifa plana (cuándo acaba y
-si cumple el requisito del salario mínimo para el segundo año) y cuota según ingresos después; ayuda puntual como
-ingreso; libros registro (pueden salir de `aCSV()` y `gastosCSV()`).
+**Fase 3, parte B (en marcha):** hecho el punto 1, tarifa plana (1.2.1). Pendientes, en este orden de trabajo: 4) cuota
+desde el tercer año con tabla de tramos editable y gasto que falta para bajar de un límite; 5) ayuda puntual como
+ingreso de la actividad, con interruptor «cuenta para la Seguridad Social»; 2) gráficos mes a mes; 3) libros registro
+en CSV (pueden salir de `aCSV()` y `gastosCSV()`). El comparador cooperativa / autónomo NO se hace (decisión del usuario).
 
 Limitaciones conocidas: no hay prorrata de IVA, recargo de equivalencia ni operaciones con el extranjero; el material
 comprado antes del alta no se amortiza; la cuota del mes del alta cuenta entera.

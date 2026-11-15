@@ -63,6 +63,12 @@ export function fiscalPorDefecto() {
     diaTrimestre: 20,             // último día de abril, julio y octubre para el 303 y el 130
     diaEnero: 30,                 // último día de enero para el 4T y el 390
     cuotas: [{ desde: '', importe: 88.64 }], // tramos de cuota: desde 'AAAA-MM' ('' = desde el alta)
+    tarifaPlanaMeses: 12,         // tarifa plana: meses naturales completos siguientes al alta
+    prorrogaMeses: 12,            // ...y los de la prórroga, si el beneficio del año no llega al salario mínimo
+    smiAnual: 17094,              // salario mínimo interprofesional al año (el de 2026: 1.221 € × 14)
+    genericosSSPct: 7,            // la Seguridad Social descuenta este % (gastos genéricos) al calcular el beneficio
+    prorrogaPedida: false,        // decisión mía: ya he pedido la prórroga de la tarifa plana
+    avisoTarifaDias: 60,          // avisar de que acaba la tarifa plana con estos días de antelación
     categorias: [
       { id: 'material', nombre: 'Material y herramientas', ivaPct: 21, dedIva: 100, dedIrpf: 100 },
       { id: 'vehiculo', nombre: 'Gasolina y vehículo', ivaPct: 21, dedIva: 50, dedIrpf: 0 },

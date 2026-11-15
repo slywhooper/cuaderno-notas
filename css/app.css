@@ -201,3 +201,7 @@ input[readonly] { color: var(--suave); background: var(--panel); }
   .hoja { animation: subir .18s ease-out; }
   @keyframes subir { from { transform: translate(-50%, 24px); } }
 }
+
+/* Fase 3B: veredicto de la tarifa plana y de la cuota */
+.veredicto { font-size: .88rem; margin: 8px 0 4px; }
+.veredicto .enlace { font-size: inherit; }

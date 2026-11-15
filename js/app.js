@@ -17,7 +17,7 @@ import * as F from './fiscal.js';
 import * as MO from './modelos.js';
 import { aCSV, gastosCSV } from './csv.js';
 
-const VERSION = '1.2.0'; // cambiar también en sw.js
+const VERSION = '1.2.1'; // cambiar también en sw.js
 const MIN_CLAVE = 4; // decisión del usuario: código corto tipo PIN (él sabe que una copia así se puede forzar)
 
 const S = {
@@ -60,6 +60,7 @@ const gastos = () => M.vivos(S.estado.gastos);
 const redondo = (n) => Math.round(n * 100) / 100;
 const diasHasta = (iso) => Math.round((new Date(iso + 'T12:00:00') - new Date(M.hoyISO() + 'T12:00:00')) / 864e5);
 const cuando = (iso) => { const d = diasHasta(iso); return d < 0 ? `venció hace ${plural(-d, 'día')}` : d === 0 ? 'vence hoy' : `faltan ${plural(d, 'día')}`; };
+const mesLargo = (ym) => new Intl.DateTimeFormat('es-ES', { month: 'long', year: 'numeric' }).format(new Date(Number(ym.slice(0, 4)), Number(ym.slice(5, 7)) - 1, 1));
 const kv = (et, valor, clase = '') => `<div class="kv ${clase}"><span>${et}</span><span class="num">${typeof valor === 'number' ? eur(valor === 0 ? 0 : valor) : valor}</span></div>`;
 /** Guarda un cambio de ajustes (marca los ajustes como modificados para que viajen en la copia). */
 function guardarAjustes(repintar = false) {
@@ -79,6 +80,8 @@ const ENLACES = {
   m390: 'https://sede.agenciatributaria.gob.es/static_files/Sede/Procedimiento_ayuda/G412/Instrucciones_modelo_390-2025.pdf',
   simplificada: 'https://sede.agenciatributaria.gob.es/Sede/irpf/empresarios-individuales-profesionales/regimenes-determinar-rendimiento-actividad/estimacion-directa-simplificada.html',
   amortizacion: 'https://sede.agenciatributaria.gob.es/Sede/ayuda/manuales-videos-folletos/manuales-practicos/folleto-actividades-economicas/3-impuesto-sobre-renta-personas-fisicas/3_5-estimacion-directa-simplificada/3_5_4-tabla-amortizacion-simplificada.html',
+  tarifa: 'https://www.seg-social.es/descarga/es/142496',
+  smi: 'https://boe.es/buscar/pdf/2026/BOE-A-2026-3815-consolidado.pdf',
   reduccion: 'https://sede.agenciatributaria.gob.es/Sede/ayuda/manuales-videos-folletos/manuales-practicos/irpf-2025/c07-rendimientos-actividades-economicas-estimacion-directa/fase-3-determinacion-rendimiento-neto-total/reduccion-rendimiento-neto-inicio-actividad-economica.html',
 };
 const enlace = (k, texto = 'Página oficial') => `<a class="oficial" href="${ENLACES[k]}" target="_blank" rel="noopener noreferrer">${texto} ↗</a>`;
@@ -93,6 +96,10 @@ const PARAMETROS = [
   ['umbralInversionIva', 'IVA: un bien es «de inversión» desde', '€', 'm303'],
   ['amortizacionLibreMax', 'Material: puede ir como gasto normal hasta (por unidad)', '€', 'amortizacion'],
   ['umbral347', 'Modelo 347: importe anual por cliente', '€', 'modelos'],
+  ['tarifaPlanaMeses', 'Tarifa plana: meses completos tras el alta', 'meses', 'tarifa'],
+  ['prorrogaMeses', 'Tarifa plana: meses de prórroga', 'meses', 'tarifa'],
+  ['smiAnual', 'Salario mínimo al año (límite para la prórroga)', '€', 'smi'],
+  ['genericosSSPct', 'Seguridad Social: descuento por gastos genéricos', '%', 'cuota'],
   ['diaTrimestre', 'Último día en abril, julio y octubre', 'día', 'calendario'],
   ['diaEnero', 'Último día en enero (4T y resumen anual)', 'día', 'calendario'],
 ];
@@ -101,6 +108,7 @@ const PROPIOS = [
   ['reservaRentaPct', 'Reserva para la renta: parte del beneficio', '%'],
   ['subidaSimPct', 'Simulación: subida de mi tarifa', '%'],
   ['avisoPlazoDias', 'Avisarme de un plazo con esta antelación', 'días'],
+  ['avisoTarifaDias', 'Avisarme de que acaba la tarifa plana con esta antelación', 'días'],
 ];
 
 function aviso(texto) {
@@ -271,6 +279,10 @@ const VISTAS = {
     const tp = M.totales(pend.map((x) => x.f), A);
     const cerca = F.plazosCercanos(S.estado);
     const plazo = cerca.length ? `<button class="banda" data-accion="ir-imp" data-imp="calendario">${esc(cerca[0].titulo)} (${esc(cerca[0].periodo)}): ${cuando(cerca[0].fecha)}${cerca.length > 1 ? ` · y ${cerca.length - 1} más` : ''}</button>` : '';
+    const plana = F.tarifaPlana(S.estado);
+    const tarifa = plana && plana.avisar ? `<button class="banda" data-accion="ir-imp" data-imp="resumen">${plana.avisar === 'fin'
+      ? `La tarifa plana acaba el ${fechaCorta(plana.fin1)} (${cuando(plana.fin1).replace('vence', 'acaba')}). La prórroga se pide antes de ese día`
+      : `Tarifa plana: falta apuntar tu cuota desde ${mesLargo(plana.mesNuevo)}`} ›</button>` : '';
     const h = A.fechaAlta ? F.hucha(S.estado) : null;
     const lineaHucha = h && h.total > 0 ? `<button class="comp hucha" data-accion="ir-imp" data-imp="resumen">Hucha de impuestos: ten apartados ${eur(h.total)}</button>` : '';
     const ultimas = fs.filter((f) => f.estado === 'cobrada').sort(ordenFecha).slice(0, 5);
@@ -285,7 +297,7 @@ const VISTAS = {
     const copia = dias === null || dias >= (S.estado.ajustes.avisoCopiaDias || 7)
       ? `<button class="banda" data-accion="sub" data-sub="copias">${dias === null ? 'Todavía no has hecho ninguna copia de seguridad' : `Llevas ${dias} días sin copia de seguridad`} · Hacer copia</button>` : '';
 
-    return { titulo: 'Inicio', cab: chipsAnio(), html: `${copia}${plazo}
+    return { titulo: 'Inicio', cab: chipsAnio(), html: `${copia}${plazo}${tarifa}
       <section class="heroe">
         <div class="et">Neto cobrado · ${S.anio === 'todo' ? 'todo' : S.anio}</div>
         <div class="grande num">${eur(redondo(t.netoCobrado - cuota))}</div>
@@ -377,6 +389,48 @@ function barraReparto(a) {
     <div class="leyenda mini"><span class="l-neto">Neto ${Math.round(neto)} %</span><span class="l-irpf">IRPF ${Math.round(irpf)} %</span><span class="l-cuota">Cuota ${Math.round(cuota)} %</span></div>`;
 }
 
+/** Tarjeta «Tarifa plana»: cuándo acaba y si el beneficio del año queda por debajo del salario mínimo (requisito de la prórroga). */
+function tarjetaTarifa(a) {
+  const fi = fiscal(), sim = a.modo === 'simulacion';
+  const linea = (r) => `${kv(`Beneficio para la Seguridad Social · ${r.anio}${r.cerrado || sim ? '' : ' · llevas'}`, r.llevas)}
+      ${r.cerrado || r.llevas === r.proyeccion ? '' : kv('A este ritmo acabarías el año en', r.proyeccion)}`;
+  const veredicto = (r, texto) => `<p class="veredicto ${r.cumple ? 'ok' : 'amb'}">${r.cumple ? '✓' : '⚠'} ${texto}</p>`;
+  const de = '<button class="enlace" data-accion="detalle-ss" data-anio="ANIO">Ver de dónde sale</button>';
+  if (sim) {
+    const r = F.ritmoSS(S.estado, a.anio);
+    return `<section class="tarjeta sep" data-et="tarifa">
+      <div class="et">Tarifa plana · requisito del segundo año</div>
+      ${linea(r)}${kv('Salario mínimo al año', r.smi)}
+      ${veredicto(r, r.cumple ? `Con un año así habrías quedado por debajo del salario mínimo: podrías pedir la prórroga.` : `Con un año así habrías pasado del salario mínimo: sin prórroga.`)}
+      ${de.replace('ANIO', a.anio)}</section>`;
+  }
+  const tp = F.tarifaPlana(S.estado);
+  if (!tp) return '';
+  const falta = cuando(tp.fin).replace('vence', 'acaba');
+  const cab = tp.fase === 'acabada' ? `Acabó el ${fechaCorta(tp.fin)}` : tp.pedida ? `Hasta el ${fechaCorta(tp.fin)}` : `Acaba el ${fechaCorta(tp.fin)}`;
+  const sub = tp.fase === 'acabada' ? '' : `<div class="mini">${tp.pedida ? 'con la prórroga · ' : ''}${falta}</div>`;
+  const aniosTxt = tp.anios.map((r) => r.anio).join(' y ');
+  let cuerpo;
+  if (tp.fase === 'acabada') cuerpo = `<p class="pie arriba0">Ya pagas la cuota normal según tu beneficio.</p>`;
+  else if (tp.fase === 'primer' && !tp.pedida) {
+    const r = tp.actual;
+    cuerpo = `<p class="pie arriba0">Para seguir ${numEntrada(fi.prorrogaMeses)} meses más (hasta el ${fechaCorta(tp.fin2)}) tienes que pedir la prórroga <b>antes del ${fechaCorta(tp.fin1)}</b> y prever que tu beneficio de ${aniosTxt} quedará por debajo del salario mínimo.</p>
+      ${linea(r)}${kv('Salario mínimo al año', r.smi)}
+      ${veredicto(r, r.cumple ? 'A este ritmo quedas por debajo del salario mínimo: podrías pedir la prórroga.' : 'A este ritmo pasas del salario mínimo: la prórroga no te valdría.')}
+      ${de.replace('ANIO', r.anio)}`;
+  } else {
+    cuerpo = `<p class="pie arriba0">El beneficio tiene que quedar por debajo del salario mínimo en cada año: ${aniosTxt}. Si un año lo pasas, la Seguridad Social te reclama la diferencia de cuota de ese año.</p>
+      ${tp.anios.map((r) => (r.futuro ? kv(`Beneficio para la Seguridad Social · ${r.anio}`, 'Aún sin datos')
+        : `${linea(r)}${veredicto(r, r.cumple ? `${r.anio}: por debajo del salario mínimo (${eur(r.smi)}).` : `${r.anio}: ${r.cerrado ? 'pasaste' : 'a este ritmo pasas'} del salario mínimo (${eur(r.smi)}).`)}${de.replace('ANIO', r.anio)}`)).join('')}`;
+  }
+  const tramo = tp.faltaTramo && (tp.fase === 'acabada' || tp.avisar) ? `<p class="veredicto amb">⚠ Desde ${mesLargo(tp.mesNuevo)} ya no vale la tarifa plana y no tienes apuntada la cuota nueva. <button class="enlace" data-accion="sub" data-sub="fiscal">Añadir el tramo</button></p>` : '';
+  const boton = tp.fase === 'acabada' && tp.pedida ? '' : `<button class="btn chico ${tp.pedida ? '' : 'sec'}" data-accion="prorroga">${tp.pedida ? '✓ Prórroga pedida' : 'He pedido la prórroga'}</button>`;
+  return `<section class="tarjeta sep" data-et="tarifa">
+    <div class="cab-t"><div><div class="et">Tarifa plana</div><div class="medio">${cab}</div>${sub}</div>${boton}</div>
+    ${cuerpo}${tramo}
+    <p class="pie">La app no cambia tu cuota sola: los tramos los pones tú en Ajustes de autónomo. Comprueba la fecha exacta en tu resolución de alta. ${enlace('tarifa', 'Seguridad Social')}</p></section>`;
+}
+
 function impResumen(a) {
   const sim = a.modo === 'simulacion', fi = fiscal();
   const h = sim ? { iva: a.total303, m130: a.total130, renta: a.reservaRenta, total: redondo(a.total303 + a.total130 + a.reservaRenta) } : F.hucha(S.estado);
@@ -392,6 +446,7 @@ function impResumen(a) {
       ${kv('IVA para el modelo 303', h.iva)}${kv('IRPF para el modelo 130', a.obligado130 || h.m130 ? h.m130 : 'No toca')}${kv(`Reserva para la renta (${numEntrada(fi.reservaRentaPct)} % del beneficio)`, h.renta)}
       ${sim ? '' : '<button class="enlace" data-accion="detalle-hucha">Ver de dónde sale</button>'}
     </section>
+    ${tarjetaTarifa(a)}
     <p class="pie">El IVA no es tuyo: lo cobras y lo ingresas. La reserva para la renta sale de tu neto; es una estimación tuya y se cambia en Ajustes de autónomo.</p>
     <h2 class="tit">${a.anio} en números</h2>
     <section class="tarjeta">
@@ -1065,6 +1120,15 @@ const ACCIONES = {
     const p = fiscal().presentados, id = el.dataset.id;
     if (p[id]) delete p[id]; else p[id] = true;
     guardarAjustes(true);
+  },
+  prorroga() { fiscal().prorrogaPedida = !fiscal().prorrogaPedida; guardarAjustes(true); },
+  'detalle-ss'(el) {
+    const r = F.ritmoSS(S.estado, el.dataset.anio), fi = fiscal(), suma = redondo(r.rendimiento + r.cuota);
+    dialogo({ titulo: `Beneficio para la Seguridad Social · ${r.anio}`, cuerpo: `<p>La Seguridad Social no mira el mismo beneficio que Hacienda: le vuelve a sumar la cuota que has pagado y le descuenta un ${numEntrada(fi.genericosSSPct)} % por gastos genéricos.</p>
+      ${kv('Beneficio para Hacienda', r.rendimiento)}${kv('Cuota de autónomos pagada', r.cuota)}${kv(`Descuento del ${numEntrada(fi.genericosSSPct)} %`, redondo(r.llevas - suma))}${kv('Beneficio para la Seguridad Social', r.llevas, 'fuerte')}
+      ${r.cerrado || r.futuro || r.llevas === r.proyeccion ? '' : `${kv('A este ritmo, al acabar el año', r.proyeccion)}<p class="pie">«A este ritmo» reparte lo que llevas por los días que han pasado y lo alarga hasta el 31 de diciembre. Es una estimación.</p>`}
+      ${kv('Salario mínimo al año', r.smi)}
+      <p class="pie">El salario mínimo y el descuento se cambian en Ajustes de autónomo.</p>`, botones: [{ texto: 'Cerrar', valor: true }] });
   },
   'detalle-hucha'() {
     const h = F.hucha(S.estado);
