@@ -182,6 +182,10 @@ Fase 3, parte B (15 de noviembre de 2026; plan completo en la sección 14 del do
   viejos de la caché del navegador y dejar una mezcla de versiones. Si llega una versión nueva con la app abierta, se
   recarga sola en la pantalla del código o avisa si ya está desbloqueada. `index.html`, el manifest y los iconos no
   cambian de una versión a otra: es normal que en GitHub conserven su fecha antigua.
+- Vista de PC (1.4.0): el usuario usa la app sobre todo en el PC; el móvil es para consultar o apuntar algo urgente.
+  Desde 1000 px de ancho el contenido va en columnas (`.cols` > `.col`, al final de `app.css`) para que cada pantalla
+  quepa sin bajar; por debajo, `.cols` y `.col` son `display: contents` y el móvil queda exactamente igual. Las pestañas
+  siguen abajo (decisión del usuario). Una pantalla nueva debe envolver sus bloques en `.cols`/`.col`.
 - `leerNumero()` (1.2.3): «1.000» escrito sin coma se lee como mil (antes, como uno). «1.5» sigue siendo 1,5.
 
 ## Lo que falta
@@ -190,10 +194,10 @@ Fase 3, parte B (15 de noviembre de 2026; plan completo en la sección 14 del do
 explicación, resumen para la renta, material que se amortiza, gastos de difícil justificación, minoración del 130 y
 reducción por inicio de actividad.
 
-**Fase 3, parte B: hecha** (versión 1.3.1): tarifa plana (1.2.1), cuota según el beneficio (1.2.2), ayuda puntual
+**Fase 3, parte B: hecha** (versión 1.4.0, que añade la vista de PC): tarifa plana (1.2.1), cuota según el beneficio (1.2.2), ayuda puntual
 (1.2.3), libros registro (1.2.4) y gráficos (1.3.0). El comparador cooperativa / autónomo NO se hace (decisión del usuario).
 
-Pendiente, de baja prioridad: aprovechar el ancho de la pantalla en el PC sin quitar las pestañas de abajo; confirmar
+Pendiente: probar la vista de PC en la pantalla real del usuario y ajustar lo que pida; confirmar
 la tabla de tramos y el salario mínimo de cada año; resolver la duda de la ayuda de Garantía Juvenil si se la conceden.
 
 Limitaciones conocidas: no hay prorrata de IVA, recargo de equivalencia ni operaciones con el extranjero; el material

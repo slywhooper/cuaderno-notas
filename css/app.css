@@ -218,3 +218,31 @@ input[readonly] { color: var(--suave); background: var(--panel); }
 .g-ley span { color: var(--suave); } .g-ley span::before { background: var(--c); }
 .g-l-neto { --c: #14a08a; } .g-l-gastos { --c: #6f86e8; } .g-l-impuestos { --c: #b9831f; }
 .g-det { margin-top: 8px; } .g-det .control { margin-top: 6px; } .g-det .enlace { font-size: inherit; text-transform: capitalize; }
+
+/* --- Vista de PC (1.4.0). El móvil no cambia: .cols y .col no pintan nada por debajo de 1000 px. ---
+   Las pestañas siguen abajo. El contenido usa todo el ancho en columnas para que cada pantalla quepa sin bajar. */
+.cols, .col { display: contents; }
+@media (min-width: 1000px) {
+  #app { max-width: 1500px; }
+  .cab { padding-left: 28px; padding-right: 28px; }
+  .cuerpo { padding-left: 28px; padding-right: 28px; }
+  .cols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; align-items: start; }
+  .cols.dos { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .col { display: block; min-width: 0; }
+  .col > :first-child { margin-top: 0; }
+  .fab { right: max(28px, calc(50vw - 750px + 28px)); }
+  .grande { font-size: 3.3rem; }
+  /* listas a lo ancho: facturas, gastos, plazos, clientes y menús en varias columnas (dentro de una columna siguen en una) */
+  .lista { grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); align-items: start; }
+  .filtros { grid-template-columns: 2fr 1fr 1fr; max-width: 900px; } .filtros input { grid-column: auto; }
+  .tres, .porcobrar { max-width: 100%; }
+  .casillas { display: block; columns: 2; column-gap: 24px; } .casillas .cas { break-inside: avoid; margin-bottom: 6px; }
+  .btn.ancho { width: auto; min-width: 260px; }
+  .vacio { max-width: 520px; margin: 0 auto; }
+  /* pantallas largas de Más (ajustes, copias, ayudas): en dos columnas */
+  #app[data-vista^="mas/"]:not([data-vista="mas/"]) .cuerpo { columns: 2; column-gap: 28px; }
+  #app[data-vista^="mas/"] .cuerpo > * { break-inside: avoid; }
+  #app[data-vista^="mas/"] .cuerpo .tit { break-after: avoid; }
+  #app[data-vista^="mas/"] .cuerpo .lista { grid-template-columns: 1fr; }
+  #app[data-vista="mas/"] .cuerpo .lista { grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
+}

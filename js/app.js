@@ -17,7 +17,7 @@ import * as F from './fiscal.js';
 import * as MO from './modelos.js';
 import { aCSV, gastosCSV, libroEmitidas, libroRecibidas, libroBienes } from './csv.js';
 
-const VERSION = '1.3.1'; // cambiar también en sw.js
+const VERSION = '1.4.0'; // cambiar también en sw.js
 const MIN_CLAVE = 4; // decisión del usuario: código corto tipo PIN (él sabe que una copia así se puede forzar)
 
 const S = {
@@ -300,6 +300,7 @@ const VISTAS = {
       ? `<button class="banda" data-accion="sub" data-sub="copias">${dias === null ? 'Todavía no has hecho ninguna copia de seguridad' : `Llevas ${dias} días sin copia de seguridad`} · Hacer copia</button>` : '';
 
     return { titulo: 'Inicio', cab: chipsAnio(), html: `${copia}${plazo}${tarifa}
+      <div class="cols"><div class="col">
       <section class="heroe">
         <div class="et">Neto cobrado · ${S.anio === 'todo' ? 'todo' : S.anio}</div>
         <div class="grande num">${eur(redondo(t.netoCobrado - cuota))}</div>
@@ -312,10 +313,12 @@ const VISTAS = {
         <div><div class="et">Neto por confirmar</div><div class="medio pc num">${tp.nSinNeto} fact.</div>
           <div class="mini num">bruto ${eur(tp.brutoSinNeto)}</div></div>
       </section>
+      </div><div class="col">
       <h2 class="tit">Próximos cobros</h2>
       <div class="lista">${pend.length ? pend.map((x) => filaFactura(x.f, { cobrar: true })).join('') : '<p class="nada">No tienes nada pendiente de cobro.</p>'}</div>
+      </div><div class="col">
       <h2 class="tit">Últimas cobradas <button class="enlace" data-accion="ir" data-vista="facturas">Ver todas</button></h2>
-      <div class="lista">${ultimas.map((f) => filaFactura(f)).join('')}</div>` };
+      <div class="lista">${ultimas.map((f) => filaFactura(f)).join('')}</div></div></div>` };
   },
 
   facturas() {
@@ -441,16 +444,16 @@ function impGraficos(a) {
       <table class="control"><thead><tr><th>Mes</th><th>Te queda</th><th>Gastos</th><th>Impuestos</th></tr></thead><tbody>
       ${g.meses.map((m, i) => `<tr><th><button class="enlace" data-accion="mes" data-mes="${m.m}">${MESES[i]}</button></th><td class="num">${eur(m.neto)}</td><td class="num">${eur(m.gastos)}</td><td class="num">${eur(m.impuestos)}</td></tr>`).join('')}
       <tr><th>Año</th><td class="num">${eur(T.neto)}</td><td class="num">${eur(T.gastos)}</td><td class="num">${eur(T.impuestos)}</td></tr></tbody></table></details>`;
-  return `${reparto}
-    <h2 class="tit">Mes a mes</h2>
+  return `<div class="cols"><div class="col">${reparto}
+    </div><div class="col"><h2 class="tit">Mes a mes</h2>
     <section class="tarjeta">${graficoMeses(g, sel)}
       <p class="pie">Cada factura cuenta en el mes de su fecha de factura. Toca un mes para ver de dónde sale.</p>${tabla}</section>
-    <section class="tarjeta sep" data-et="mes">
+    </div><div class="col"><section class="tarjeta sep" data-et="mes">
       <div class="et">${MESES[sel - 1]} ${a.anio}</div>
       <div class="medio"><span class="num">${eur(x.neto)}</span> <span class="mini">te queda</span></div>
       ${kv(`Facturado sin IVA · ${plural(x.n, 'factura')}`, x.base)}${a.general ? kv('IVA cobrado', x.iva) : ''}${kv('IRPF', x.irpf)}${kv('Cuota de autónomos', x.cuota)}${kv('Impuestos y cuota, en total', x.impuestos)}${kv(`Gastos pagados · ${plural(x.nGastos, 'gasto')}`, x.gastos)}
     </section>
-    ${delMes.length ? `<h2 class="tit">Facturas de ${MESES[sel - 1]}</h2><div class="lista">${delMes.map((f) => filaFactura(f)).join('')}</div>` : ''}`;
+    ${delMes.length ? `<h2 class="tit">Facturas de ${MESES[sel - 1]}</h2><div class="lista">${delMes.map((f) => filaFactura(f)).join('')}</div>` : ''}</div></div>`;
 }
 
 /** Tarjeta «Tarifa plana»: cuándo acaba y si el beneficio del año queda por debajo del salario mínimo (requisito de la prórroga). */
@@ -517,7 +520,7 @@ function tarjetaCuota(a) {
 function impResumen(a) {
   const sim = a.modo === 'simulacion', fi = fiscal();
   const h = sim ? { iva: a.total303, m130: a.total130, renta: a.reservaRenta, total: redondo(a.total303 + a.total130 + a.reservaRenta) } : F.hucha(S.estado);
-  return `<section class="heroe">
+  return `<div class="cols"><div class="col"><section class="heroe">
       <div class="et">${sim ? 'Te habría quedado neto' : 'Neto'} · ${a.anio}</div>
       <div class="grande num">${eur(a.neto)}</div>
       <div class="mini num">de ${eur(a.base)} facturados sin IVA · ${plural(a.n, 'factura emitida', 'facturas emitidas')}${a.sinCerrar ? ` · ${a.sinCerrar} sin cerrar no cuentan` : ''}</div>
@@ -529,9 +532,9 @@ function impResumen(a) {
       ${kv('IVA para el modelo 303', h.iva)}${kv('IRPF para el modelo 130', a.obligado130 || h.m130 ? h.m130 : 'No toca')}${kv(`Reserva para la renta (${numEntrada(fi.reservaRentaPct)} % del beneficio)`, h.renta)}
       ${sim ? '' : '<button class="enlace" data-accion="detalle-hucha">Ver de dónde sale</button>'}
     </section>
-    ${tarjetaTarifa(a)}${tarjetaCuota(a)}
     <p class="pie">El IVA no es tuyo: lo cobras y lo ingresas. La reserva para la renta sale de tu neto; es una estimación tuya y se cambia en Ajustes de autónomo.</p>
-    <h2 class="tit">${a.anio} en números</h2>
+    </div><div class="col">${tarjetaTarifa(a)}${tarjetaCuota(a)}
+    </div><div class="col"><h2 class="tit">${a.anio} en números</h2>
     <section class="tarjeta">
       ${kv('Facturado sin IVA', a.base)}${a.ayudas ? kv('Ayudas y subvenciones', a.ayudas) : ''}
       ${a.general ? kv('IVA cobrado a clientes', a.iva) + kv('IVA deducible de gastos', -a.ivaDeducible) + kv('IVA a ingresar en el año', a.total303, 'fuerte') + (a.aDevolver303 ? kv('IVA a tu favor al cerrar el año', a.aDevolver303) : '') : kv('IVA', 'Franquicia: sin IVA')}
@@ -543,7 +546,7 @@ function impResumen(a) {
       ${a.dificil ? kv(`Gastos de difícil justificación (${numEntrada(fi.difJustPct)} %)`, a.dificil) : ''}
       ${kv('Beneficio para Hacienda', a.rendimiento, 'fuerte')}
     </section>
-    <p class="pie">Beneficio = facturado${a.ayudas ? ' + ayudas' : ''} − gastos deducibles − cuota − amortización − gastos de difícil justificación. Cuentan las facturas emitidas (pendientes o cobradas) por su fecha de factura. <button class="enlace" data-accion="sub" data-sub="fiscal">Ajustes de autónomo</button></p>`;
+    <p class="pie">Beneficio = facturado${a.ayudas ? ' + ayudas' : ''} − gastos deducibles − cuota − amortización − gastos de difícil justificación. Cuentan las facturas emitidas (pendientes o cobradas) por su fecha de factura. <button class="enlace" data-accion="sub" data-sub="fiscal">Ajustes de autónomo</button></p></div></div>`;
 }
 
 function impTrimestres(a) {
@@ -562,8 +565,8 @@ function impTrimestres(a) {
       ${kv('Rebaja fija del trimestre (minoración)', -t.c130['13'])}${t.c130['15'] ? kv('Negativo de trimestres anteriores', -t.c130['15']) : ''}
       ${kv(t.c130['19'] < 0 ? 'Sale negativo: no pagas' : 'A ingresar', t.c130['19'] < 0 ? t.c130['19'] : t.pago130, 'fuerte')}`;
   return `${chips}
-    <section class="tarjeta sep"><div class="cab-t"><div><div class="et">IVA · modelo 303 · ${q}T</div>${plazo(p303)}</div>${marca(p303)}</div>${iva}</section>
-    <section class="tarjeta sep"><div class="cab-t"><div><div class="et">IRPF · modelo 130 · ${q}T</div>${plazo(p130)}</div>${marca(p130)}</div>${irpf}</section>
+    <div class="cols dos"><div class="col"><section class="tarjeta sep"><div class="cab-t"><div><div class="et">IVA · modelo 303 · ${q}T</div>${plazo(p303)}</div>${marca(p303)}</div>${iva}</section>
+    </div><div class="col"><section class="tarjeta sep"><div class="cab-t"><div><div class="et">IRPF · modelo 130 · ${q}T</div>${plazo(p130)}</div>${marca(p130)}</div>${irpf}</section></div></div>
     <p class="pie num">${plural(t.n, 'factura emitida', 'facturas emitidas')} · ${eur(t.base)} sin IVA · ${plural(t.nGastos, 'gasto')} · cuota ${eur(t.cuota)}</p>
     <button class="btn sec ancho" data-accion="imp" data-imp="modelos">Ver las casillas para presentarlo</button>`;
 }
